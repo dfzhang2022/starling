@@ -10,6 +10,9 @@ add_executable(fvecs_to_bvecs fvecs_to_bvecs.cpp)
 add_executable(rand_data_gen rand_data_gen.cpp)
 target_link_libraries(rand_data_gen ${PROJECT_NAME} Boost::program_options)
 
+add_executable(analyze_block_path analyze_block_path.cpp)
+target_link_libraries(analyze_block_path ${PROJECT_NAME}  Boost::program_options)
+
 add_executable(float_bin_to_int8 float_bin_to_int8.cpp)
 
 add_executable(ivecs_to_bin ivecs_to_bin.cpp)

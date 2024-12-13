@@ -8,6 +8,7 @@
 #include <fstream>
 #include <functional>
 #include <algorithm>
+#include <chrono>
 #ifdef _WINDOWS
 #include <numeric>
 #endif
@@ -18,6 +19,18 @@
 #include "parameters.h"
 
 namespace diskann {
+
+  struct BlockVisited{
+    uint64_t block_id;
+    std::chrono::high_resolution_clock::time_point timestamp; // set by who create this record. in us
+
+    BlockVisited() : block_id(0), timestamp(std::chrono::high_resolution_clock::now()) {
+    }
+
+    BlockVisited(uint64_t block_id_in, std::chrono::high_resolution_clock::time_point timestamp_in)
+     : block_id(block_id_in), timestamp(timestamp_in) {
+    }
+  };
   struct QueryStats {
     float total_us = 0;  // total time to process query in micros
     float io_us = 0;     // total time spent in IO
@@ -32,6 +45,8 @@ namespace diskann {
     unsigned n_cmps = 0;        // # cmps
     unsigned n_cache_hits = 0;  // # cache_hits
     unsigned n_hops = 0;        // # search hops
+
+    std::vector<BlockVisited> block_visited_queue;
   };
 
   template<typename T>

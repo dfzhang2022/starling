@@ -70,3 +70,11 @@ RS_LS="80"
 RS_ITER_KNN_TO_RANGE_SEARCH=1 # 0 for custom search, 1 for iterating via KNN, combine with USE_PAGE_SEARCH
 KICKED_SIZE=0 # non-zero to reuse intermediate states during page search
 RS_CUSTOM_ROUND=0 # set when use custom search, 0 for all pages within radius
+
+
+
+###################
+#   IO Analysis   #
+###################
+
+ANALYZE_WINDOW_SIZE=0.5

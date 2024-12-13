@@ -1052,6 +1052,7 @@ namespace diskann {
 
       // read nhoods of frontier ids
       if (!frontier.empty()) {
+        std::vector<BlockVisited> block_visited_in_this_iter;
         if (stats != nullptr)
           stats->n_hops++;
         for (_u64 i = 0; i < frontier.size(); i++) {
@@ -1067,6 +1068,7 @@ namespace diskann {
           if (stats != nullptr) {
             stats->n_4k++;
             stats->n_ios++;
+            block_visited_in_this_iter.push_back( BlockVisited(NODE_SECTOR_NO(((size_t) id)), std::chrono::high_resolution_clock::now()));
           }
           num_ios++;
         }
@@ -1078,6 +1080,10 @@ namespace diskann {
 #endif
         if (stats != nullptr) {
           stats->io_us += (double) io_timer.elapsed();
+          for(auto item: block_visited_in_this_iter){
+            stats->block_visited_queue.push_back(BlockVisited(item.block_id,std::chrono::high_resolution_clock::now()));
+          }
+          block_visited_in_this_iter.clear();
         }
       }
 
