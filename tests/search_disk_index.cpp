@@ -322,33 +322,35 @@ int search_disk_index(
 
 
     {// save block path
-      std::string  block_path_filename = result_block_path_L${LS}_B${BW}_T${T}.bin
-                  result_output_prefix + "_block_path" +"_L" + std::to_string(L)+ "_B"+ std::to_string(optimized_beamwidth) +"_T"+std::to_string(T)+ ".bin";
+      std::string  block_path_filename =
+                  result_output_prefix + "_block_path" +"_L" + std::to_string(L)+ "_B"+ std::to_string(optimized_beamwidth) +"_T"+std::to_string(num_threads)+ ".bin";
       std::ofstream outFile(block_path_filename, std::ios::binary);
       if (!outFile) {
-          std::cerr << "Failed to open file for writing: " << filename << std::endl;
-          return;
-      }
-      // 写入 query 数量
-      // size_t query_num = queries.size();
-      outFile.write(reinterpret_cast<const char*>(&query_num), sizeof(query_num));
-      // 遍历每个查
-      for (_s64 i = 0; i < (int64_t) query_num; i++) {
-        size_t block_num = stats[i].block_visited_queue.size();
-        outFile.write(reinterpret_cast<const char*>(&block_num), sizeof(block_num));
-        // 写入每个 BlockVisited
-          for (const auto& block : stats[i].block_visited_queue) {
-              // 写入 block_id
-              outFile.write(reinterpret_cast<const char*>(&block.block_id), sizeof(block.block_id));
+          std::cerr << "Failed to open file for writing: " << block_path_filename << std::endl;
+      }else{
+        // 写入 query 数量
+        // size_t query_num = queries.size();
+        outFile.write(reinterpret_cast<const char*>(&query_num), sizeof(query_num));
+        // 遍历每个查
+        for (_s64 i = 0; i < (int64_t) query_num; i++) {
+          size_t block_num = stats[i].block_visited_queue.size();
+          outFile.write(reinterpret_cast<const char*>(&block_num), sizeof(block_num));
+          // 写入每个 BlockVisited
+            for (const auto& block : stats[i].block_visited_queue) {
+                // 写入 block_id
+                outFile.write(reinterpret_cast<const char*>(&block.block_id), sizeof(block.block_id));
 
-              // 将 timestamp 转换为 float（秒数）并写入
-              std::chrono::duration<double> diff = block.timestamp - s;
-              float timestamp_float =  diff.count();
-              outFile.write(reinterpret_cast<const char*>(&timestamp_float), sizeof(timestamp_float));
-          }
+                // 将 timestamp 转换为 float（秒数）并写入
+                std::chrono::duration<double> diff = block.timestamp - s;
+                float timestamp_float =  diff.count();
+                outFile.write(reinterpret_cast<const char*>(&timestamp_float), sizeof(timestamp_float));
+            }
+        }
+        outFile.close();
       }
-      outFile.close();
+      
     }
+
     delete[] stats;
   }
 

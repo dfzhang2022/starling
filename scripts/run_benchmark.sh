@@ -5,13 +5,17 @@ set -e
 
 source config_local.sh
 
+SOURCE_CODE_PATH=/home/xieminhui/starling
+
+INDICES_PATH=/home/xieminhui/starling/indices
+
 INDEX_PREFIX_PATH="${PREFIX}_M${M}_R${R}_L${BUILD_L}_B${B}/"
 MEM_SAMPLE_PATH="${INDEX_PREFIX_PATH}SAMPLE_RATE_${MEM_RAND_SAMPLING_RATE}/"
 MEM_INDEX_PATH="${INDEX_PREFIX_PATH}MEM_R_${MEM_R}_L_${MEM_BUILD_L}_ALPHA_${MEM_ALPHA}_MEM_USE_FREQ${MEM_USE_FREQ}_RANDOM_RATE${MEM_RAND_SAMPLING_RATE}_FREQ_RATE${MEM_FREQ_USE_RATE}/"
 GP_PATH="${INDEX_PREFIX_PATH}GP_TIMES_${GP_TIMES}_LOCK_${GP_LOCK_NUMS}_GP_USE_FREQ${GP_USE_FREQ}_CUT${GP_CUT}/"
 FREQ_PATH="${INDEX_PREFIX_PATH}FREQ/NQ_${FREQ_QUERY_CNT}_BM_${FREQ_BM}_L_${FREQ_L}_T_${FREQ_T}/"
 
-SUMMARY_FILE_PATH="../indices/summary.log"
+SUMMARY_FILE_PATH=${INDICES_PATH}/summary.log
 
 print_usage_and_exit() {
   echo "Usage: ./run_benchmark.sh [debug/release] [build/build_mem/freq/gp/search] [knn/range]"
@@ -31,11 +35,11 @@ check_dir_and_make_if_absent() {
 case $1 in
   debug)
     cmake -DCMAKE_BUILD_TYPE=Debug .. -B ../debug
-    EXE_PATH=../debug
+    EXE_PATH=${SOURCE_CODE_PATH}/debug
   ;;
   release)
     cmake -DCMAKE_BUILD_TYPE=Release .. -B ../release
-    EXE_PATH=../release
+    EXE_PATH=${SOURCE_CODE_PATH}/release
   ;;
   *)
     print_usage_and_exit
@@ -45,7 +49,9 @@ pushd $EXE_PATH
 make -j
 popd
 
-mkdir -p ../indices && cd ../indices
+mkdir -p ${INDICES_PATH} && cd ${INDICES_PATH}
+
+pwd
 
 date
 case $2 in
@@ -180,6 +186,16 @@ case $2 in
     BLOCK_PATH_BIN=${INDEX_PREFIX_PATH}result/result_block_path_L${LS}_B${BW}_T${T}.bin
     echo "Analyze block path file... ${BLOCK_PATH_BIN}"
     time ${EXE_PATH}/tests/utils/analyze_block_path --block_path_file $BLOCK_PATH_BIN --time_window_size $IO_WINDOW_SIZE
+  ;;
+  compute_gt)
+    echo "Computing gt of ${QUERY_FILE} from ${BASE_PATH}"
+    time ${EXE_PATH}/tests/utils/compute_groundtruth  --data_type $DATA_TYPE \
+                --dist_fn $DIST_FN \
+                --base_file $BASE_PATH \
+                --query_file  $QUERY_FILE \
+                --gt_file $GT_FILE \
+                --K $K
+    echo "Complete computing."
   ;;
   gp)
     check_dir_and_make_if_absent ${GP_PATH}
