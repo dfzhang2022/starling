@@ -84,6 +84,37 @@ case $2 in
           -M $M \
           -T $BUILD_T > ${BATCH_BUILD_INDEX_PREFIX_PATH}build.log
         cp ${BATCH_BUILD_INDEX_PREFIX_PATH}_disk.index ${BATCH_BUILD_INDEX_PREFIX_PATH}_disk_beam_search.index
+
+        BATCH_BUILD_GP_PATH="${BATCH_BUILD_INDEX_PREFIX_PATH}GP_TIMES_${GP_TIMES}_LOCK_${GP_LOCK_NUMS}_GP_USE_FREQ${GP_USE_FREQ}_CUT${GP_CUT}/"
+        check_dir_and_make_if_absent ${BATCH_BUILD_GP_PATH}
+        OLD_INDEX_FILE=${BATCH_BUILD_INDEX_PREFIX_PATH}_disk_beam_search.index
+        if [ ! -f "$OLD_INDEX_FILE" ]; then
+          OLD_INDEX_FILE=${INDEX_PREFIX_PATH}_disk.index
+        fi
+        #using sq index file to gp
+        GP_DATA_TYPE=$DATA_TYPE
+        if [ $USE_SQ -eq 1 ]; then 
+          OLD_INDEX_FILE=${BATCH_BUILD_INDEX_PREFIX_PATH}_disk.index
+          GP_DATA_TYPE=uint8
+        fi
+        GP_FILE_PATH=${BATCH_BUILD_GP_PATH}_part.bin
+        echo "Running graph partition... ${GP_FILE_PATH}.log"
+        if [ ${GP_USE_FREQ} -eq 1 ]; then
+          time ${EXE_PATH}/graph_partition/partitioner --index_file ${OLD_INDEX_FILE} \
+            --data_type $GP_DATA_TYPE --gp_file $GP_FILE_PATH -T $GP_T --ldg_times $GP_TIMES --freq_file ${FREQ_PATH}_freq.bin --lock_nums ${GP_LOCK_NUMS} --cut ${GP_CUT} > ${GP_FILE_PATH}.log
+        else
+          time ${EXE_PATH}/graph_partition/partitioner --index_file ${OLD_INDEX_FILE} \
+            --data_type $GP_DATA_TYPE --gp_file $GP_FILE_PATH -T $GP_T --ldg_times $GP_TIMES > ${GP_FILE_PATH}.log
+        fi
+
+        echo "Running relayout... ${GP_PATH}relayout.log"
+        time ${EXE_PATH}/tests/utils/index_relayout ${OLD_INDEX_FILE} ${GP_FILE_PATH} > ${BATCH_BUILD_GP_PATH}relayout.log
+        if [ ! -f "${BATCH_BUILD_INDEX_PREFIX_PATH}_disk_beam_search.index" ]; then
+          mv $OLD_INDEX_FILE ${BATCH_BUILD_INDEX_PREFIX_PATH}_disk_beam_search.index
+        fi
+        #TODO: Use only one index file
+        cp ${BATCH_BUILD_GP_PATH}_part_tmp.index ${BATCH_BUILD_INDEX_PREFIX_PATH}_disk.index
+        cp ${GP_FILE_PATH} ${BATCH_BUILD_INDEX_PREFIX_PATH}_partition.bin
       done
     done
   ;;
