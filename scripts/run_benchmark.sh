@@ -176,6 +176,11 @@ case $2 in
               --use_page_search 0 \
               --disk_file_path ${DISK_FILE_PATH} > ${FREQ_LOG}
   ;;
+  analyze_block)
+    BLOCK_PATH_BIN=${INDEX_PREFIX_PATH}result/result_block_path_L${LS}_B${BW}_T${T}.bin
+    echo "Analyze block path file... ${BLOCK_PATH_BIN}"
+    time ${EXE_PATH}/tests/utils/analyze_block_path --block_path_file $BLOCK_PATH_BIN --time_window_size $IO_WINDOW_SIZE
+  ;;
   gp)
     check_dir_and_make_if_absent ${GP_PATH}
     OLD_INDEX_FILE=${INDEX_PREFIX_PATH}_disk_beam_search.index

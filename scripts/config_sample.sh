@@ -84,3 +84,5 @@ RS_CUSTOM_ROUND=0 # set when use custom search, 0 for all pages within radius
 ###################
 #   IO Analysis   #
 ###################
+
+IO_WINDOW_SIZE=0.5
