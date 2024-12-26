@@ -64,6 +64,29 @@ case $2 in
       -T $BUILD_T > ${INDEX_PREFIX_PATH}build.log
     cp ${INDEX_PREFIX_PATH}_disk.index ${INDEX_PREFIX_PATH}_disk_beam_search.index
   ;;
+  batch_build)
+    
+    echo "Building disk index in batch..."
+    for BATCH_R in ${BATCH_BUILD_R[@]}
+    do
+      for BATCH_L in ${BATCH_BUILD_L[@]}
+      do
+        BATCH_BUILD_INDEX_PREFIX_PATH="${PREFIX}_M${M}_R${BATCH_R}_L${BATCH_L}_B${B}/"
+        check_dir_and_make_if_absent ${BATCH_BUILD_INDEX_PREFIX_PATH}
+        time ${EXE_PATH}/tests/build_disk_index \
+          --data_type $DATA_TYPE \
+          --dist_fn $DIST_FN \
+          --data_path $BASE_PATH \
+          --index_path_prefix $BATCH_BUILD_INDEX_PREFIX_PATH \
+          -R $R \
+          -L $BUILD_L \
+          -B $B \
+          -M $M \
+          -T $BUILD_T > ${BATCH_BUILD_INDEX_PREFIX_PATH}build.log
+        cp ${BATCH_BUILD_INDEX_PREFIX_PATH}_disk.index ${BATCH_BUILD_INDEX_PREFIX_PATH}_disk_beam_search.index
+      done
+    done
+  ;;
   sq)
     cp  ${INDEX_PREFIX_PATH}_disk_beam_search.index ${INDEX_PREFIX_PATH}_disk.index 
     time ${EXE_PATH}/tests/utils/sq ${INDEX_PREFIX_PATH} > ${INDEX_PREFIX_PATH}sq.log

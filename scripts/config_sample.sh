@@ -13,6 +13,14 @@ BUILD_L=128
 M=32
 BUILD_T=8
 
+########################
+#   Disk Batch Build   #
+########################
+BATCH_BUILD_R=(48 64 80)
+BATCH_BUILD_L=(100 200 300)
+M=500
+BUILD_T=8
+
 ##################
 #       SQ       #
 ##################
@@ -59,7 +67,7 @@ CACHE=0
 MEM_L=0 # non-zero to enable
 
 # Page Search
-USE_PAGE_SEARCH=1 # Set 0 for beam search, 1 for page search (default)
+USE_PAGE_SEARCH=0 # Set 0 for beam search, 1 for page search (default)
 PS_USE_RATIO=1.0
 
 # KNN
@@ -76,5 +84,3 @@ RS_CUSTOM_ROUND=0 # set when use custom search, 0 for all pages within radius
 ###################
 #   IO Analysis   #
 ###################
-
-ANALYZE_WINDOW_SIZE=0.5
