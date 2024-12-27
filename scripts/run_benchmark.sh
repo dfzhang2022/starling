@@ -5,9 +5,9 @@ set -e
 
 source config_local.sh
 
-SOURCE_CODE_PATH=/home/xieminhui/starling
+SOURCE_CODE_PATH=/home/dfzhang/starling
 
-INDICES_PATH=/home/xieminhui/starling/indices
+INDICES_PATH=/data/dataset/indices
 
 INDEX_PREFIX_PATH="${PREFIX}_M${M}_R${R}_L${BUILD_L}_B${B}/"
 MEM_SAMPLE_PATH="${INDEX_PREFIX_PATH}SAMPLE_RATE_${MEM_RAND_SAMPLING_RATE}/"
@@ -84,8 +84,8 @@ case $2 in
           --dist_fn $DIST_FN \
           --data_path $BASE_PATH \
           --index_path_prefix $BATCH_BUILD_INDEX_PREFIX_PATH \
-          -R $R \
-          -L $BUILD_L \
+          -R $BATCH_R \
+          -L $BATCH_L \
           -B $B \
           -M $M \
           -T $BUILD_T > ${BATCH_BUILD_INDEX_PREFIX_PATH}build.log
