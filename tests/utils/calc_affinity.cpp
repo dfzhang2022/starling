@@ -3,7 +3,6 @@
 //
 #include <chrono>
 #include <string>
-#include <utils.h>
 #include <memory>
 #include <set>
 #include <vector>
@@ -23,14 +22,31 @@
 #include <queue>
 #include <random>
 
-#include "cached_io.h"
-#include "pq_flash_index.h"
+#include <boost/program_options.hpp>
+
+
+#include <atomic>
+#include <cstring>
+#include <iomanip>
+#include <omp.h>
+#include <pq_flash_index.h>
+#include <set>
+#include <string.h>
+#include <time.h>
+#include <boost/program_options.hpp>
 #include "aux_utils.h"
+#include "utils.h"
+
+// #include "linux_aligned_file_reader.h"
+
+namespace po = boost::program_options;
 
 #define READ_SECTOR_LEN (size_t) 4096
 #define READ_SECTOR_OFFSET(node_id) \
   ((_u64) node_id / nnodes_per_sector  + 1) * READ_SECTOR_LEN + ((_u64) node_id % nnodes_per_sector) * max_node_len;
 #define INF 0xffffffff
+
+// #define disk_bytes_per_point 128
 
 const std::string partition_index_filename = "_tmp.index";
 const std::string affinity_filename = "_affinity.bin";
@@ -114,9 +130,14 @@ std::unordered_map<unsigned, std::set<unsigned>> loadFromFile(const std::string&
 }
 
 
-
-// Read index and   
-void stat_affinity(const char* indexname, const char* partition_name){
+template<typename T>
+// Read index and
+void stat_block_outdegree(
+  diskann::Metric& metric, const std::string& index_path_prefix,
+  const std::string& result_output_prefix,
+  const std::string& disk_file_path,
+  const unsigned num_threads,
+  const bool use_page_search=true){
   _u64                               C;
   _u64                               _partition_nums;
   _u64                               _nd;
@@ -127,7 +148,17 @@ void stat_affinity(const char* indexname, const char* partition_name){
 
   std::vector<unsigned> id2page_;
   std::vector<std::vector<unsigned>> gp_layout_;
+  
+  std::string indexname = index_path_prefix+"_disk.index";
+  std::string partition_name = index_path_prefix+"_partition.bin";
 
+  std::string pq_table_bin = index_path_prefix + "_pq_pivots.bin";
+  std::string pq_compressed_vectors =
+        index_path_prefix + "_pq_compressed.bin";
+  std::string medoids_file = index_path_prefix + "_medoids.bin";
+
+  std::cout<<"Index file name is: "<<indexname<<std::endl;
+  std::cout<<"Partition file name is: "<<partition_name<<std::endl;
   std::ifstream part(partition_name);
   part.read((char*) &C, sizeof(_u64));
   part.read((char*) &_partition_nums, sizeof(_u64));
@@ -137,8 +168,8 @@ void stat_affinity(const char* indexname, const char* partition_name){
 
 
 
-  auto meta_pair = diskann::get_disk_index_meta(indexname);
-  _u64 actual_index_size = get_file_size(indexname);
+  auto meta_pair = diskann::get_disk_index_meta(indexname.c_str());
+  _u64 actual_index_size = get_file_size(indexname.c_str());
   _u64 expected_file_size, expected_npts;
 
   if (meta_pair.first) {
@@ -170,6 +201,20 @@ void stat_affinity(const char* indexname, const char* partition_name){
     exit(-1);
   }
 
+
+  size_t pq_file_dim, pq_file_num_centroids;
+  diskann::get_bin_metadata(pq_table_bin, pq_file_num_centroids, pq_file_dim,
+                     METADATA_SIZE);
+  if (pq_file_num_centroids != 256) {
+    diskann::cout << "Error. Number of PQ centroids is not 256. Exitting."
+                  << std::endl;
+    // return -1;
+  }
+  unsigned disk_bytes_per_point = pq_file_dim * sizeof(T);
+  std::cout << "disk bytes per point: "<<disk_bytes_per_point << std::endl;
+
+
+
   layout.resize(_partition_nums);
   for (unsigned i = 0; i < _partition_nums; i++) {
     unsigned s;
@@ -178,7 +223,7 @@ void stat_affinity(const char* indexname, const char* partition_name){
     part.read((char*) layout[i].data(), sizeof(unsigned) * s);
   }
   id2page_.resize(_nd);
-  part.read((char *) id2page_.data(), sizeof(unsigned) * nd);
+  part.read((char *) id2page_.data(), sizeof(unsigned) * _nd);
 
   // this time, we load all index into mem;
   std::cout << "nnodes per sector "<<nnodes_per_sector << std::endl;
@@ -193,10 +238,11 @@ void stat_affinity(const char* indexname, const char* partition_name){
 
 
   std::unique_ptr<char[]> sector_buf = std::make_unique<char[]>(SECTOR_LEN);
-  std::unique_ptr<char[]> node_buf = std::make_unique<char[]>(max_node_len);
+  // std::unique_ptr<char[]> node_buf = std::make_unique<char[]>(max_node_len);
 
+  uint32_t cnt1 = 0,cnt2 = 0, cnt3 = 0;
   for (unsigned i = 0; i < block_nums; i++) {
-    if (i % 1000 == 0) {
+    if (i % 100000 == 0) {
       diskann::cout << "calc affinity has done " << (float) i / block_nums
                     << std::endl;
       diskann::cout.flush();
@@ -213,28 +259,61 @@ void stat_affinity(const char* indexname, const char* partition_name){
     
     for(unsigned j = 0;j<nnodes_per_sector;j++){
       char *node_disk_buf =
-            OFFSET_TO_NODE(sector_buf,j);
+            OFFSET_TO_NODE(sector_buf.get(),j);
       unsigned *node_buf = OFFSET_TO_NODE_NHOOD(node_disk_buf);
       _u64      nnbrs = (_u64)(*node_buf);
       unsigned *node_nbrs = (node_buf + 1);
+      if(i ==0 || i==1){
+        std::cout<<"nnbrs:"<<nnbrs<<std::endl;
+      }
       for(_u64 nbr_idx = 0; nbr_idx < nnbrs;nbr_idx++){
         unsigned *tmp_nbr = (node_nbrs + nbr_idx);
-        mapping[i].insert(id2page_[(_u64)(*tmp_nbr)]);
+        // TODO 这里需要考虑如果是beam_search直接计算块号就可以，如果是page_search 那么使用id_page
+        
+        if(use_page_search){
+          mapping[i].insert(id2page_[(_u64)(*tmp_nbr)]);
+          if(i ==0 || i==1){
+            std::cout<<id2page_[(_u64)(*tmp_nbr)]<<" "<<std::endl;
+          }
+        }else{
+          mapping[i].insert(NODE_SECTOR_NO((_u64)(*tmp_nbr)));
+        }
+        
       }
+      
     }
-    
+    if(i ==0 || i==1){
+      std::cout<<"size:"<<mapping[i].size()<<std::endl;
+    }
+    if(mapping[i].size() > 0&& mapping[i].size()<=32){
+      cnt1++;
+    }else if(mapping[i].size()<=60){
+      cnt2++;
+    }else {
+      cnt3++;
+    }
   }
+  std::cout<<"cnt1: "<<cnt1<<",cnt2: "<<cnt2<<",cnt3: "<<cnt3<<std::endl;
+  std::string output_outdegree_path = result_output_prefix+"_outdegree";
+  if(use_page_search){
+    output_outdegree_path = output_outdegree_path+"_PageSearch"+std::to_string(1)+".bin";
+  }
+  else{
+    output_outdegree_path = output_outdegree_path+"_PageSearch"+std::to_string(0)+".bin";
+  }
+  std::cout<<"Output file: "<<output_outdegree_path<<std::endl;
+  saveToFile(output_outdegree_path,mapping);
 
   // save to file
   {
-    _u64            read_blk_size = 64 * 1024 * 1024;
-    _u64            write_blk_size = read_blk_size;
-    std::string affinity_path(indexname);
-    affinity_path = affinity_path.substr(0, partition_path.find_last_of('.')) + affinity_filename;
+    // _u64            read_blk_size = 64 * 1024 * 1024;
+    // _u64            write_blk_size = read_blk_size;
+    // std::string affinity_path(indexname);
+    // affinity_path = affinity_path.substr(0, affinity_path.find_last_of('.')) + affinity_filename;
     
-    std::cout << "Affinity path: "<< affinity_path << std::endl;
+    // std::cout << "Affinity path: "<< affinity_path << std::endl;
     // cached_ofstream diskann_writer(partition_path, write_blk_size);
-    saveToFile(affinity_path, mapping);
+    // saveToFile(affinity_path, mapping);
   }
   return;
 }
@@ -243,9 +322,78 @@ void stat_affinity(const char* indexname, const char* partition_name){
 // The new index data
 
 int main(int argc, char** argv){
-  char* indexName = argv[1];
-  char* partitonName = argv[2];
+  
+  // char* indexName = argv[1];
+  // char* partitonName = argv[2];
+
+
+  std::string data_type, dist_fn, index_path_prefix, result_path_prefix, disk_file_path,
+              block_out_degree_save_path;
+  unsigned              num_threads;
+  bool                  use_page_search = true;
+
+  po::options_description desc{"Arguments"};
+  try {
+    desc.add_options()("help,h", "Print information on arguments");
+    desc.add_options()("data_type",
+                       po::value<std::string>(&data_type)->required(),
+                       "data type <int8/uint8/float>");
+    desc.add_options()("dist_fn", po::value<std::string>(&dist_fn)->required(),
+                       "distance function <l2/mips/fast_l2>");
+    desc.add_options()("index_path_prefix",
+                       po::value<std::string>(&index_path_prefix)->required(),
+                       "Path prefix to the index");
+    desc.add_options()("result_path",
+                       po::value<std::string>(&result_path_prefix)->required(),
+                       "Path prefix for saving results of the queries");
+
+    
+    desc.add_options()(
+        "num_threads,T",
+        po::value<uint32_t>(&num_threads)->default_value(omp_get_num_procs()),
+        "Number of threads used for building index (defaults to "
+        "omp_get_num_procs())");
+    desc.add_options()("use_page_search", po::value<bool>(&use_page_search)->default_value(1),
+                       "Use 1 for page search (default), 0 for DiskANN beam search");
+    desc.add_options()("disk_file_path", po::value<std::string>(&disk_file_path)->required(),
+                       "The path of the disk file (_disk.index in the original DiskANN)");
+    desc.add_options()("block_out_degree_save_path", po::value<std::string>(&block_out_degree_save_path)->required(),
+                       "frequency file save path");
+
+    po::variables_map vm;
+    po::store(po::parse_command_line(argc, argv, desc), vm);
+    if (vm.count("help")) {
+      std::cout << desc;
+      return 0;
+    }
+    po::notify(vm);
+  } catch (const std::exception& ex) {
+    std::cerr << ex.what() << '\n';
+    return -1;
+  }
+
+  diskann::Metric metric;
+  if (dist_fn == std::string("mips")) {
+    metric = diskann::Metric::INNER_PRODUCT;
+  } else if (dist_fn == std::string("l2")) {
+    metric = diskann::Metric::L2;
+  } else if (dist_fn == std::string("cosine")) {
+    metric = diskann::Metric::COSINE;
+  } else {
+    std::cout << "Unsupported distance function. Currently only L2/ Inner "
+                 "Product/Cosine are supported."
+              << std::endl;
+    return -1;
+  }
+  // ${INDEX_PREFIX_PATH}_partition.bin
+  stat_block_outdegree<uint8_t>(metric,index_path_prefix, 
+            result_path_prefix, 
+            disk_file_path,
+            num_threads,
+            use_page_search);
+
+
   // relayout(indexName, partitonName);
-  stat_affinity(indexName, partitonName);
+  // stat_affinity(indexName, partitonName);
   return 0;
 }

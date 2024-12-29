@@ -113,7 +113,7 @@ case $2 in
             --data_type $GP_DATA_TYPE --gp_file $GP_FILE_PATH -T $GP_T --ldg_times $GP_TIMES > ${GP_FILE_PATH}.log
         fi
 
-        echo "Running relayout... ${GP_PATH}relayout.log"
+        echo "Running relayout... ${BATCH_BUILD_GP_PATH}relayout.log"
         time ${EXE_PATH}/tests/utils/index_relayout ${OLD_INDEX_FILE} ${GP_FILE_PATH} > ${BATCH_BUILD_GP_PATH}relayout.log
         if [ ! -f "${BATCH_BUILD_INDEX_PREFIX_PATH}_disk_beam_search.index" ]; then
           mv $OLD_INDEX_FILE ${BATCH_BUILD_INDEX_PREFIX_PATH}_disk_beam_search.index
@@ -227,6 +227,40 @@ case $2 in
     #TODO: Use only one index file
     cp ${GP_PATH}_part_tmp.index ${INDEX_PREFIX_PATH}_disk.index
     cp ${GP_FILE_PATH} ${INDEX_PREFIX_PATH}_partition.bin
+  ;;
+  calc_aff)
+    mkdir -p ${INDEX_PREFIX_PATH}/search
+    mkdir -p ${INDEX_PREFIX_PATH}/result
+    if [ ! -d "$INDEX_PREFIX_PATH" ]; then
+      echo "Directory $INDEX_PREFIX_PATH is not exist. Build it first?"
+      exit 1
+    fi
+
+    # choose the disk index file by settings
+    DISK_FILE_PATH=${INDEX_PREFIX_PATH}_disk.index
+    if [ $USE_PAGE_SEARCH -eq 1 ]; then
+      if [ ! -f ${INDEX_PREFIX_PATH}_partition.bin ]; then
+        echo "Partition file not found. Run the script with gp option first."
+        exit 1
+      fi
+      echo "Using Page Search"
+    else
+      OLD_INDEX_FILE=${INDEX_PREFIX_PATH}_disk_beam_search.index
+      if [ -f ${OLD_INDEX_FILE} ]; then
+        DISK_FILE_PATH=$OLD_INDEX_FILE
+      else
+        echo "make sure you have not gp the index file"
+      fi
+      echo "Using Beam Search"
+    fi
+    echo "Read index "
+    time ${EXE_PATH}/tests/utils/calc_affinity --data_type $DATA_TYPE \
+              --dist_fn $DIST_FN \
+              --index_path_prefix $INDEX_PREFIX_PATH \
+              --result_path ${INDEX_PREFIX_PATH}result/result \
+              --use_page_search ${USE_PAGE_SEARCH} \
+              --disk_file_path ${DISK_FILE_PATH} \
+              --block_out_degree_save_path ${INDEX_PREFIX_PATH}/result/aff.bin
   ;;
   search)
     mkdir -p ${INDEX_PREFIX_PATH}/search
