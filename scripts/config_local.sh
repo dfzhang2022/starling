@@ -9,8 +9,8 @@ dataset_bigann100M
 ##################
 #   Disk Build   #
 ##################
-R=48
-BUILD_L=128
+R=64
+BUILD_L=100
 M=32
 BUILD_T=144
 
@@ -68,7 +68,7 @@ CACHE=0
 MEM_L=0 # non-zero to enable
 
 # Page Search
-USE_PAGE_SEARCH=0 # Set 0 for beam search, 1 for page search (default)
+USE_PAGE_SEARCH=1 # Set 0 for beam search, 1 for page search (default)
 PS_USE_RATIO=1.0
 
 # KNN

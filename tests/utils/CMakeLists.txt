@@ -74,6 +74,11 @@ target_link_libraries(index_relayout ${PROJECT_NAME})
 add_executable(calc_affinity calc_affinity.cpp)
 target_link_libraries(calc_affinity ${PROJECT_NAME} Boost::program_options)
 
+
+
+add_executable(ana_index_layout ana_index_layout.cpp)
+target_link_libraries(ana_index_layout ${PROJECT_NAME} Boost::program_options)
+
 add_executable(parse_freq_file parse_freq_file.cpp)
 target_link_libraries(parse_freq_file ${PROJECT_NAME})
 

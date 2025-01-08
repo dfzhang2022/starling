@@ -73,12 +73,10 @@ dataset_bigann1B() {
 dataset_350M() {
   BASE_PATH=/data/dataset/DEEP/learn.350M.fbin
   QUERY_FILE=/data/dataset/DEEP/query.public.10K.fbin
-  GT_FILE=/data/dataset/DEEP/deep-10k-gt.bin 
-  PREFIX=bigann_100m
-  DATA_TYPE=uint8
+  GT_FILE=/data/dataset/DEEP/deep-10k-gt.fbin 
+  PREFIX=deep_350m
+  DATA_TYPE=float
   DIST_FN=l2
-  B=5
+  B=16
   K=100
-  DATA_DIM=128
-  DATA_N=10000000
 }

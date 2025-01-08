@@ -23,6 +23,7 @@
 #include <random>
 
 #include <boost/program_options.hpp>
+#include <omp.h>
 
 
 #include <atomic>
@@ -128,6 +129,84 @@ std::unordered_map<unsigned, std::set<unsigned>> loadFromFile(const std::string&
     }
     return result;
 }
+double calculateAverageOutDegree(const std::vector<size_t>& out_degree) {
+    if (out_degree.empty()) {
+        return 0.0;  // 防止空向量除零错误
+    }
+    
+    // 计算总和
+    size_t total = std::accumulate(out_degree.begin(), out_degree.end(), static_cast<size_t>(0));
+    
+    // 计算平均值
+    return static_cast<double>(total) / out_degree.size();
+}
+
+class Block{
+
+public:
+    std::vector<unsigned> out_block;
+    double duplicateRatio;
+    size_t out_degree;
+    size_t maximum_block_key;
+    size_t maximum_block_value;
+    size_t maximum_block_value_10_sum;
+    Block(){};
+    ~Block(){
+        this->out_block.clear();
+    };
+
+    void anaylze(){
+        // 使用 unordered_map 来统计每个元素出现的次数
+        std::unordered_map<unsigned, int> freq_map;
+
+        // 统计元素出现的次数
+        for (unsigned num : out_block) {
+            freq_map[num]++;
+        }
+
+        // 计算重复元素的数量
+        int duplicateCount = 0;
+        for (const auto& entry : freq_map) {
+            if (entry.second > 1) {
+                duplicateCount += entry.second;  // 累加重复元素的总数量
+            }
+        }
+
+        // 计算并返回重复元素的比例
+        this->duplicateRatio =  static_cast<double>(freq_map.size()) / out_block.size();
+        this->out_degree = freq_map.size();
+
+        
+        
+        std::vector<std::pair<unsigned, int>> freq_vector(freq_map.begin(), freq_map.end());
+    
+        // 根据第二个值（即 int）进行降序排序
+        std::sort(freq_vector.begin(), freq_vector.end(), [](const std::pair<unsigned, int>& a, const std::pair<unsigned, int>& b) {
+            return a.second > b.second;  // 降序排序
+        });
+        
+        // 提取排序后的键
+        std::vector<unsigned> sorted_keys;
+        for (const auto& pair : freq_vector) {
+            sorted_keys.push_back(pair.first);
+        }
+
+        // 提取排序后的键
+        std::vector<unsigned> sorted_values;
+        for (const auto& pair : freq_vector) {
+            sorted_values.push_back(pair.second);
+        }
+        this->maximum_block_key = sorted_keys[0];
+        this->maximum_block_value = sorted_values[0];
+
+
+        this->maximum_block_value_10_sum = 0;
+        for(size_t i = 0; i<10;i++){
+            this->maximum_block_value_10_sum += sorted_values[i];
+        }
+
+    }
+};
 
 
 template<typename T>
@@ -138,18 +217,18 @@ void stat_block_outdegree(
   const std::string& disk_file_path,
   const unsigned num_threads,
   const bool use_page_search=true){
-  _u64                               C;
-  _u64                               _partition_nums;
-  _u64                               _nd;
-  _u64                               max_node_len;
+  _u64                               C; // 单个块内部有多少个节点
+  _u64                               _partition_nums; // 分区数量 也等于 磁盘上的块数
+  _u64                               _nd; // 索引中的点数量
+  _u64                               max_node_len; // 最大单节点长度
   std::vector<std::vector<unsigned>> layout;
   std::vector<std::vector<unsigned>> _partition;
   std::unordered_map<unsigned,std::set<unsigned>> mapping;
 
-  std::vector<unsigned> id2page_;
+  std::vector<unsigned> id2page_; // 在重排后的索引中，使用点id找到对应的物理块号
   std::vector<std::vector<unsigned>> gp_layout_;
   
-  std::string indexname = index_path_prefix+"_disk.index";
+  std::string indexname = disk_file_path;
   std::string partition_name = index_path_prefix+"_partition.bin";
 
   std::string pq_table_bin = index_path_prefix + "_pq_pivots.bin";
@@ -165,6 +244,12 @@ void stat_block_outdegree(
   part.read((char*) &_nd, sizeof(_u64));
   std::cout << "Partition meta: C: " << C << " partition_nums:" << _partition_nums
             << " _nd:" << _nd << std::endl;
+
+  if(use_page_search){
+    std::cout<<"Executing on page_search index"<<std::endl;
+  }else{
+    std::cout<<"Executing on beam_search index"<<std::endl;
+  }
 
 
 
@@ -236,64 +321,9 @@ void stat_block_outdegree(
   _u64 block_nums = ((expected_npts + nnodes_per_sector - 1) / nnodes_per_sector);
   std::cout << "Amount of blocks " << block_nums << std::endl;
 
-
-  std::unique_ptr<char[]> sector_buf = std::make_unique<char[]>(SECTOR_LEN);
-  // std::unique_ptr<char[]> node_buf = std::make_unique<char[]>(max_node_len);
-
-  uint32_t cnt1 = 0,cnt2 = 0, cnt3 = 0;
-  for (unsigned i = 0; i < block_nums; i++) {
-    if (i % 100000 == 0) {
-      diskann::cout << "calc affinity has done " << (float) i / block_nums
-                    << std::endl;
-      diskann::cout.flush();
-    }
-    auto set = mapping.find(i);
-    if(set == mapping.end()){
-      mapping[i] = std::set<unsigned>();
-    }
-    memset(sector_buf.get(), 0, SECTOR_LEN);
-    uint64_t sector_index = (1 + i) * READ_SECTOR_LEN;
-    memcpy((char*) sector_buf.get(),
-             (char*) mem_index.get() + sector_index, max_node_len);
-
-    
-    for(unsigned j = 0;j<nnodes_per_sector;j++){
-      char *node_disk_buf =
-            OFFSET_TO_NODE(sector_buf.get(),j);
-      unsigned *node_buf = OFFSET_TO_NODE_NHOOD(node_disk_buf);
-      _u64      nnbrs = (_u64)(*node_buf);
-      unsigned *node_nbrs = (node_buf + 1);
-      if(i ==0 || i==1){
-        std::cout<<"nnbrs:"<<nnbrs<<std::endl;
-      }
-      for(_u64 nbr_idx = 0; nbr_idx < nnbrs;nbr_idx++){
-        unsigned *tmp_nbr = (node_nbrs + nbr_idx);
-        // TODO 这里需要考虑如果是beam_search直接计算块号就可以，如果是page_search 那么使用id_page
-        
-        if(use_page_search){
-          mapping[i].insert(id2page_[(_u64)(*tmp_nbr)]);
-          if(i ==0 || i==1){
-            std::cout<<id2page_[(_u64)(*tmp_nbr)]<<" "<<std::endl;
-          }
-        }else{
-          mapping[i].insert(NODE_SECTOR_NO((_u64)(*tmp_nbr)));
-        }
-        
-      }
-      
-    }
-    if(i ==0 || i==1){
-      std::cout<<"size:"<<mapping[i].size()<<std::endl;
-    }
-    if(mapping[i].size() > 0&& mapping[i].size()<=32){
-      cnt1++;
-    }else if(mapping[i].size()<=60){
-      cnt2++;
-    }else {
-      cnt3++;
-    }
-  }
-  std::cout<<"cnt1: "<<cnt1<<",cnt2: "<<cnt2<<",cnt3: "<<cnt3<<std::endl;
+  // 定义writer
+  _u64            read_blk_size = 64 * 1024 * 1024;
+  _u64            write_blk_size = read_blk_size;
   std::string output_outdegree_path = result_output_prefix+"_outdegree";
   if(use_page_search){
     output_outdegree_path = output_outdegree_path+"_PageSearch"+std::to_string(1)+".bin";
@@ -302,7 +332,91 @@ void stat_block_outdegree(
     output_outdegree_path = output_outdegree_path+"_PageSearch"+std::to_string(0)+".bin";
   }
   std::cout<<"Output file: "<<output_outdegree_path<<std::endl;
-  saveToFile(output_outdegree_path,mapping);
+  cached_ofstream diskann_writer(output_outdegree_path, write_blk_size);
+
+
+  std::unique_ptr<char[]> sector_buf = std::make_unique<char[]>(SECTOR_LEN);
+  // std::unique_ptr<char[]> node_buf = std::make_unique<char[]>(max_node_len);
+
+
+  diskann_writer.write((char*) &block_nums,sizeof(_u64));
+
+  std::vector<Block>  block_affinity_graph;
+  block_affinity_graph.resize(block_nums);
+  for (unsigned i = 0; i < block_nums; i++) {
+    if (i % 3000000 == 0) {
+      diskann::cout << "calc affinity has done " << (float) i / block_nums
+                    << std::endl;
+      diskann::cout.flush();
+    }
+    // auto set = mapping.find(i);
+    // if(set == mapping.end()){
+    //   mapping[i] = std::set<unsigned>();
+    // }
+    
+
+    std::vector<unsigned> vec_out_blocks;
+
+    // memset(sector_buf.get(), 0, SECTOR_LEN);
+    uint64_t sector_index = (1 + i) * READ_SECTOR_LEN;
+    // memcpy((char*) sector_buf.get(),
+    //          (char*) mem_index.get() + sector_index, SECTOR_LEN);
+
+    char* disk_sector_buf = mem_index.get() + sector_index;
+    
+    // 对每一个块内部的所有节点以及他们的邻居进行合并展开
+    for(unsigned j = 0;j<nnodes_per_sector;j++){
+      char *node_disk_buf =
+            OFFSET_TO_NODE(disk_sector_buf,j);
+      unsigned *node_buf = OFFSET_TO_NODE_NHOOD(node_disk_buf);
+      _u64      nnbrs = (_u64)(*node_buf);
+      unsigned *node_nbrs = (node_buf + 1);
+      // if(i ==0 || i==1){
+      //   // 打印一个向量的样例
+      //   T* node_coord = OFFSET_TO_NODE_COORDS(node_disk_buf);
+      //   for(unsigned k = 0;k < disk_bytes_per_point;k++){
+      //     T sub_vec = (T)(*(node_coord+k*sizeof(T)));
+      //     printf("%d:{%d} ",k,sub_vec);
+      //     // std::cout<<k<<":{"<<sub_vec<<"} ";
+      //   }
+      //   std::cout<<std::endl;
+      //   std::cout<<"nnbrs:"<<nnbrs<<std::endl;
+      // }
+      for(_u64 nbr_idx = 0; nbr_idx < nnbrs;nbr_idx++){
+        unsigned *tmp_nbr = (node_nbrs + nbr_idx);
+        // TODO 这里需要考虑如果是beam_search直接计算块号就可以，如果是page_search 那么使用id_page
+        unsigned nbr_block_id = 0;
+        if(use_page_search){
+          nbr_block_id = id2page_[(*tmp_nbr)];
+        }else{
+          nbr_block_id = NODE_SECTOR_NO((*tmp_nbr));
+        }
+        vec_out_blocks.push_back(nbr_block_id);
+        block_affinity_graph[i].out_block.push_back(nbr_block_id);
+        // mapping[i].insert(nbr_block_id);
+      }
+      
+    }
+
+    unsigned vec_size = vec_out_blocks.size();
+    diskann_writer.write((char*) &vec_size,sizeof(unsigned));
+    diskann_writer.write((char*) vec_out_blocks.data(),sizeof(unsigned)* vec_size);
+
+    // block_affinity_graph[i].out_block.resize(vec_size);
+    // for(size_t i  = 0;i<vec_size;i++){
+    //   block_affinity_graph[i].out_block.push_back(vec_out_blocks[i]);
+    // }
+
+    mapping[i].clear();
+    // vec_out_blocks.clear();
+  }
+  mem_index.reset();  // 显式释放mem_index所占内存
+
+
+  // std::cout<<"cnt1: "<<cnt1<<",cnt2: "<<cnt2<<",cnt3: "<<cnt3<<std::endl;
+  
+  
+  // saveToFile(output_outdegree_path,mapping);
 
   // save to file
   {
@@ -315,6 +429,63 @@ void stat_block_outdegree(
     // cached_ofstream diskann_writer(partition_path, write_blk_size);
     // saveToFile(affinity_path, mapping);
   }
+  std::cout<<"Begin to analyze."<<std::endl;
+  std::vector<double> ratio(block_nums);
+  std::vector<size_t> out_degree(block_nums);
+  std::vector<size_t> max_out_num(block_nums);
+  std::vector<size_t> max_out_num_top10_sum(block_nums);
+  // 释放内存
+  #pragma omp parallel for
+  for(size_t i = 0 ; i < block_nums;i++){
+      // ratio[i] = calculateDuplicateRatio(block_affinity_graph[i]);
+      block_affinity_graph[i].anaylze();
+      ratio[i] = block_affinity_graph[i].duplicateRatio;
+      out_degree[i] = block_affinity_graph[i].out_degree;
+      max_out_num[i] = block_affinity_graph[i].maximum_block_value;
+      max_out_num_top10_sum[i] = block_affinity_graph[i].maximum_block_value_10_sum;
+      // if(i<10){
+      //     diskann::cout<<ratio<<std::endl;
+      // }
+      // block_affinity_graph[i].clear();
+  }
+  block_affinity_graph.clear();
+
+
+  size_t p10 = 0,p50 = 0,p80 = 0,p90 = 0;
+  for(size_t i = 0 ; i < block_nums;i++){
+      double tmp = ratio[i];
+      // if(i<10){
+      //     diskann::cout<<tmp<<std::endl;
+      //     diskann::cout<<"max conn num = "<<max_out_num[i]<<std::endl;
+      //     std::cout << "Max out-block_num top 10 sum : " << max_out_num_top10_sum[i] << std::endl;
+      // }
+      
+      if(tmp < 0.1){
+          p10++;
+      }
+      if(tmp < 0.5){
+          p50++;
+      }
+      if(tmp < 0.8){
+          p80++;
+      }
+      if(tmp < 0.9){
+          p90++;
+      }
+  }
+
+  diskann::cout<<" p10 = "<< static_cast<double>(p10)/block_nums<<std::endl;
+  diskann::cout<<" p50 = "<< static_cast<double>(p50)/block_nums<<std::endl;
+  diskann::cout<<" p80 = "<< static_cast<double>(p80)/block_nums<<std::endl;
+  diskann::cout<<" p90 = "<< static_cast<double>(p90)/block_nums<<std::endl;
+
+  double avg = calculateAverageOutDegree(out_degree);
+  std::cout << "Average out-degree: " << avg << std::endl;
+  avg = calculateAverageOutDegree(max_out_num);
+  std::cout << "Average out-block_num: " << avg << std::endl;
+  avg = calculateAverageOutDegree(max_out_num_top10_sum);
+  std::cout << "Average out-block_num top 10 sum : " << avg << std::endl;
+
   return;
 }
 
