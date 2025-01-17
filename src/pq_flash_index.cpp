@@ -100,7 +100,7 @@ namespace diskann {
         QueryScratch<T> scratch;
         _u64 coord_alloc_size = ROUND_UP(sizeof(T) * MAX_N_CMPS * this->aligned_dim, 256);
         diskann::alloc_aligned((void **) &scratch.coord_scratch,
-                               coord_alloc_size, 256);
+                              coord_alloc_size, 256);
         diskann::alloc_aligned((void **) &scratch.sector_scratch,
                                (_u64) MAX_N_SECTOR_READS * (_u64) SECTOR_LEN,
                                SECTOR_LEN);
@@ -156,6 +156,40 @@ namespace diskann {
       if (this->use_page_search_) delete scratch.page_visited;
     }
     this->reader->deregister_all_threads();
+  }
+  template<typename T>
+  void PQFlashIndex<T>::init_prefetch_cache_list(const size_t prefetch_block_size) {
+    // diskann::cout << "Init the cache in memory for block_prefetch.. size: "<<prefetch_block_size <<"*4KB" << std::flush;
+    _u64 num_cached_nodes = prefetch_block_size*nnodes_per_sector;
+
+    
+
+
+    // borrow thread data
+    // ThreadData<T> this_thread_data = this->thread_data.pop();
+    // while (this_thread_data.scratch.sector_scratch == nullptr) {
+    //   this->thread_data.wait_for_push_notify();
+    //   this_thread_data = this->thread_data.pop();
+    // }
+    // if (this_thread_data.scratch.affinity_nhood_cache != nullptr) {
+    //   delete[] this_thread_data.scratch.affinity_nhood_cache;
+    //   diskann::aligned_free(this_thread_data.scratch.affinity_coord_cache_buf);
+    // }
+
+    // this_thread_data.scratch.affinity_nhood_cache = new unsigned[num_cached_nodes * (max_degree + 1)];
+    // memset(affinity_nhood_cache_buf, 0, num_cached_nodes * (max_degree + 1));
+
+    // _u64 coord_cache_buf_len = num_cached_nodes * aligned_dim;
+    // diskann::alloc_aligned((void **) &affinity_coord_cache_buf,
+    //                        coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
+    // memset(affinity_coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
+
+
+    // // return thread data
+    // this->thread_data.push(this_thread_data);
+    // this->thread_data.push_notify_all();
+    // diskann::cout << "..done." << std::endl;
+
   }
 
   template<typename T>
@@ -557,6 +591,35 @@ namespace diskann {
       mem_index_ = std::make_unique<diskann::Index<T, uint32_t>>(metric, query_dim, 0, false, true);
       mem_index_->load(mem_index_path.c_str(), num_threads, mem_L);
   }
+  template<typename T>
+  void PQFlashIndex<T>::load_affinity_data(const std::string &index_prefix){
+    std::cout<<"Begin to load affinity data." << std::endl;
+    std::string affinity_path;
+    _u64           _block_num;
+    affinity_path = index_prefix + "_block_prefetch_PS"+ std::to_string(this->use_page_search_) +".bin";
+    if (file_exists(affinity_path)){
+      std::ifstream inFile(affinity_path);
+      inFile.read((char*) &_block_num, sizeof(_u64));
+      this->affinity_prefetch_dict_.resize(_block_num);
+      for(size_t i = 0 ; i < _block_num;i++){
+        // if (i % 3000000 == 0) {
+        //     diskann::cout << "read has done " << (float) i / _block_num
+        //                     << std::endl;
+        //     diskann::cout.flush();
+        // }
+        for(size_t j = 0;j<10;j++){
+          unsigned s;
+          inFile.read((char*) &s, sizeof(unsigned));
+          affinity_prefetch_dict_[i].push_back(s);
+        }
+      }
+      diskann::cout << "..done." << std::endl;
+    } else{
+      std::cout<<"affinity_path : " <<affinity_path<<" not exists." << std::endl;
+      return ;
+    }
+    
+  }
 
 #ifdef EXEC_ENV_OLS
   template<typename T>
@@ -741,6 +804,8 @@ namespace diskann {
     index_metadata.close();
 #endif
 
+
+  this->load_affinity_data(index_prefix);
   if (use_page_search_) {
     this->load_partition_data(index_prefix, nnodes_per_sector, num_points);
   }
@@ -1033,7 +1098,7 @@ namespace diskann {
           }
           retset[marker].flag = false;
           if (this->count_visited_nodes) {
-#pragma omp critical
+          #pragma omp critical
             {
               auto &cnt = this->node_visit_counter[retset[marker].id].second;
               ++cnt;
