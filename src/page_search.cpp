@@ -129,6 +129,7 @@ namespace diskann {
                        dists_out);
     };
 
+    // 将id的点强制push进入full_retset
     auto compute_extact_dists_and_push = [&](const char* node_buf, const unsigned id) -> float {
       T *node_fp_coords_copy = data_buf;
       memcpy(node_fp_coords_copy, node_buf, disk_bytes_per_point);
@@ -169,6 +170,8 @@ namespace diskann {
       }
     };
 
+    // 这个是原本就有的结构
+    // 计算 node_ids[] 若干个节点的pq距离并加入到retset中
     auto compute_and_add_to_retset = [&](const unsigned *node_ids, const _u64 n_ids) {
       compute_pq_dists(node_ids, n_ids, dist_scratch);
       for (_u64 i = 0; i < n_ids; ++i) {
@@ -199,11 +202,18 @@ namespace diskann {
     frontier.reserve(2 * beam_width);
     std::vector<std::pair<unsigned, char *>> frontier_nhoods;
     frontier_nhoods.reserve(2 * beam_width);
+    std::vector<std::pair<unsigned, char *>> prefetch_frontier_nhoods;
+    prefetch_frontier_nhoods.reserve(2 * beam_width * affinity_size_);
+
     std::vector<AlignedRead> frontier_read_reqs;
-    frontier_read_reqs.reserve(2 * beam_width);
+    frontier_read_reqs.reserve(2 * beam_width * (1+affinity_size_));
     std::vector<std::pair<unsigned, std::pair<unsigned, unsigned *>>>
         cached_nhoods;
     cached_nhoods.reserve(2 * beam_width);
+
+    std::vector<std::pair<unsigned, std::pair<unsigned, unsigned *>>>
+        aff_cached_nhoods;
+    aff_cached_nhoods.reserve(2 * beam_width);
 
     std::vector<unsigned> last_io_ids;
     last_io_ids.reserve(2 * beam_width);
@@ -216,12 +226,15 @@ namespace diskann {
       frontier.clear();
       frontier_nhoods.clear();
       frontier_read_reqs.clear();
+      prefetch_frontier_nhoods.clear();
       cached_nhoods.clear();
       sector_scratch_idx = 0;
       // find new beam
       _u32 marker = k;
       _u32 num_seen = 0;
 
+      // Log the id of block be visited.
+      std::vector<BlockVisited> block_visited_in_this_iter;
       // distribute cache and disk-read nodes
       while (marker < cur_list_size && frontier.size() < beam_width &&
              num_seen < beam_width) {
@@ -229,13 +242,22 @@ namespace diskann {
         if (page_visited.find(pid) == page_visited.end() && retset[marker].flag) {
           num_seen++;
           auto iter = nhood_cache.find(retset[marker].id);
+          auto iter2 = query_scratch->affinity_nhood_cache.find(retset[marker].id);
           if (iter != nhood_cache.end()) {
             cached_nhoods.push_back(
                 std::make_pair(retset[marker].id, iter->second));
             if (stats != nullptr) {
               stats->n_cache_hits++;
             }
-          } else {
+          } 
+          else if(iter2 != query_scratch->affinity_nhood_cache.end()){
+            aff_cached_nhoods.push_back(
+                std::make_pair(retset[marker].id, iter2->second));
+            if (stats != nullptr) {
+              stats->n_cache_hits++;
+            }
+          }
+          else {
             frontier.push_back(retset[marker].id);
             page_visited.insert(pid);
           }
@@ -246,24 +268,69 @@ namespace diskann {
 
       // read nhoods of frontier ids
       if (!frontier.empty()) {
+        
+        std::vector<_u64> prefetch_block_ids;
         if (stats != nullptr)
           stats->n_hops++;
         for (_u64 i = 0; i < frontier.size(); i++) {
           auto                    id = frontier[i];
+          _u64 block_id              = static_cast<_u64>(id2page_[id]+1);
           std::pair<_u32, char *> fnhood;
           fnhood.first = id;
           fnhood.second = sector_scratch + sector_scratch_idx * SECTOR_LEN;
           sector_scratch_idx++;
           frontier_nhoods.push_back(fnhood);
           frontier_read_reqs.emplace_back(
-              (static_cast<_u64>(id2page_[id]+1)) * SECTOR_LEN, SECTOR_LEN,
+              block_id * SECTOR_LEN, SECTOR_LEN,
               fnhood.second);
+          if(use_affinity_){
+          // if(true){
+            for(size_t k = 0;k<affinity_size_;k++){
+              prefetch_block_ids.push_back(affinity_prefetch_dict_[block_id][k]);
+            }
+          }
           if (stats != nullptr) {
             stats->n_4k++;
             stats->n_ios++;
+            block_visited_in_this_iter.push_back( BlockVisited(block_id, std::chrono::high_resolution_clock::now()));
           }
           num_ios++;
         }
+        if(use_affinity_){
+        // if(true){
+          for(_u64 i = 0; i < prefetch_block_ids.size(); i++){
+            unsigned pid = prefetch_block_ids[i];
+            char * sector_buf_ptr = sector_scratch + sector_scratch_idx * SECTOR_LEN;
+            for (unsigned j = 0; j < gp_layout_[pid].size(); ++j) {
+              unsigned id = gp_layout_[pid][j];
+              std::pair<_u32, char *> fnhood;
+              fnhood.first = id;
+              fnhood.second = sector_buf_ptr;
+              prefetch_frontier_nhoods.push_back(fnhood);
+            }
+            frontier_read_reqs.emplace_back(
+                pid * SECTOR_LEN, SECTOR_LEN,
+                sector_buf_ptr);
+            sector_scratch_idx++;
+            if (stats != nullptr) {
+              stats->n_4k++;
+              stats->n_ios++;
+              block_visited_in_this_iter.push_back( BlockVisited(pid, std::chrono::high_resolution_clock::now()));
+            }
+            num_ios++;
+          }
+
+
+          // TODO 对当前线程的内存进行申请分配
+          // 首先将上一个迭代中的数据清空 并 初始化
+          _u64 num_cached_nodes = prefetch_block_ids.size()*nnodes_per_sector;
+          query_scratch->refresh_and_init_affinity_cache(num_cached_nodes, max_degree, aligned_dim);
+
+        }
+
+        io_timer.reset();
+
+
         n_ops = reader->submit_reqs(frontier_read_reqs, ctx);
         if (this->count_visited_nodes) {
 #pragma omp critical
@@ -273,7 +340,7 @@ namespace diskann {
           }
         }
       }
-
+      cpu_timer.reset();
       // compute remaining nodes in the pages that are fetched in the previous round
       for (size_t i = 0; i < last_io_ids.size(); ++i) {
         const unsigned last_io_id = last_io_ids[i];
@@ -318,12 +385,65 @@ namespace diskann {
         compute_extact_dists_and_push(node_buf, id);
         compute_and_push_nbrs(node_buf, nk);
       }
+      if (stats != nullptr) {
+        stats->cpu_us += (double) cpu_timer.elapsed();
+      }
 
       // get last submitted io results, blocking
       if (!frontier.empty()) {
         reader->get_events(ctx, n_ops);
+
+        if (stats != nullptr) {
+            stats->io_us += (double) io_timer.elapsed();
+            for(auto item: block_visited_in_this_iter){
+              stats->block_visited_queue.push_back(BlockVisited(item.block_id,std::chrono::high_resolution_clock::now()));
+            }
+            block_visited_in_this_iter.clear();
+        }
+
+        if(use_affinity_){
+          unsigned * tmp_nhood_cache = query_scratch->affinity_nhood_cache_buf;
+          T * tmp_coord_cache = query_scratch->affinity_coord_cache_buf;
+          _u64 node_idx = 0;
+          for (auto &nhood : prefetch_frontier_nhoods) {
+            char* node_buf = nullptr;
+            if(use_page_search_){
+              char *sector_buf = nhood.second;
+              unsigned pid = id2page_[nhood.first];
+              for (unsigned j = 0; j < gp_layout_[pid].size(); ++j) {
+                unsigned id = gp_layout_[pid][j];
+                if (id == nhood.first) {
+                  node_buf = sector_buf + j * max_node_len;
+                }
+              }
+            }else{
+              node_buf = OFFSET_TO_NODE(nhood.second, nhood.first);
+            }
+            T *   node_coords = OFFSET_TO_NODE_COORDS(node_buf);
+            T *   cached_coords = tmp_coord_cache + node_idx * aligned_dim;
+            memcpy(cached_coords, node_coords, disk_bytes_per_point);
+            query_scratch->affinity_coord_cache.insert(std::make_pair(nhood.first, cached_coords));
+
+
+            unsigned *node_nhood = OFFSET_TO_NODE_NHOOD(node_buf);
+            auto                        nnbrs = *node_nhood;
+            unsigned *                  nbrs = node_nhood + 1;
+            std::pair<_u32, unsigned *> cnhood;
+            cnhood.first = nnbrs;
+            cnhood.second = tmp_nhood_cache + node_idx * (max_degree + 1);
+            memcpy(cnhood.second, nbrs, nnbrs * sizeof(unsigned));
+            query_scratch->affinity_nhood_cache.insert(std::make_pair(nhood.first, cnhood));
+            // aligned_free(nhood.second);
+            node_idx++;
+          }
+
+          if(stats != nullptr){
+            stats->n_affinity_cache += node_idx;
+          }
+        }
       }
 
+      cpu_timer.reset();
       // compute only the desired vectors in the pages - one for each page
       // postpone remaining vectors to the next round
       for (auto &frontier_nhood : frontier_nhoods) {
@@ -340,6 +460,10 @@ namespace diskann {
             compute_and_push_nbrs(node_buf, nk);
           }
         }
+      }
+
+      if (stats != nullptr) {
+        stats->cpu_us += (double) cpu_timer.elapsed();
       }
 
       // update best inserted position

@@ -47,6 +47,15 @@ namespace diskann {
     T *    aligned_query_T = nullptr;
     float *aligned_query_float = nullptr;
 
+    // TODO 为每个线程单独分配prefetch的存储空间
+    // prefetch_nhood_cache
+    unsigned *                                    affinity_nhood_cache_buf = nullptr;
+    tsl::robin_map<_u32, std::pair<_u32, _u32 *>> affinity_nhood_cache;
+
+    // prefetch_coord_cache
+    T *                       affinity_coord_cache_buf = nullptr;
+    tsl::robin_map<_u32, T *> affinity_coord_cache;
+
     tsl::robin_set<_u64> *visited = nullptr;
     tsl::robin_set<unsigned> *page_visited = nullptr;
 
@@ -55,6 +64,23 @@ namespace diskann {
       sector_idx = 0;
       visited->clear();  // does not deallocate memory.
       page_visited->clear();
+    }
+
+    void refresh_and_init_affinity_cache(size_t num_cached_nodes,_u64 max_degree, _u64 aligned_dim){
+        if (this->affinity_nhood_cache_buf != nullptr){
+            delete [] this->affinity_nhood_cache_buf;
+            diskann::aligned_free(this->affinity_coord_cache_buf);
+            this->affinity_nhood_cache.clear();
+            this->affinity_coord_cache.clear();
+        }
+
+        affinity_nhood_cache_buf = new unsigned[num_cached_nodes * (max_degree + 1)];
+        memset(affinity_nhood_cache_buf, 0, num_cached_nodes * (max_degree + 1));
+
+        _u64 coord_cache_buf_len = num_cached_nodes * aligned_dim;
+        diskann::alloc_aligned((void **) &affinity_coord_cache_buf,
+                           coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
+        memset(affinity_coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
     }
   };
 
@@ -87,6 +113,9 @@ namespace diskann {
     DISKANN_DLLEXPORT void load_partition_data(const std::string &index_prefix,
         const _u64 nnodes_per_sector = 0, const _u64 num_points = 0);
 
+    // load affinity blocks to each block.
+    DISKANN_DLLEXPORT void load_affinity_data(const std::string &index_prefix);
+
 #ifdef EXEC_ENV_OLS
     DISKANN_DLLEXPORT int load(diskann::MemoryMappedFiles &files,
                                uint32_t num_threads, const char *index_prefix);
@@ -101,6 +130,10 @@ namespace diskann {
         const _u32 mem_L);
 
     DISKANN_DLLEXPORT void load_cache_list(std::vector<uint32_t> &node_list);
+
+
+    // Prefetch related_
+    DISKANN_DLLEXPORT void init_prefetch_cache_list(const _u64 prefetch_block_size);
 
 #ifdef EXEC_ENV_OLS
     DISKANN_DLLEXPORT void generate_cache_list_from_sample_queries(
@@ -136,6 +169,10 @@ namespace diskann {
         const bool use_reorder_data = false, QueryStats *stats = nullptr, const _u32 mem_L = 0);
 
     DISKANN_DLLEXPORT void page_search(
+        const T *query, const _u64 k_search, const _u32 mem_L, const _u64 l_search, _u64 *res_ids,
+        float *res_dists, const _u64 beam_width, const _u32 io_limit,
+        const bool use_reorder_data = false, const float use_ratio = 1.0f, QueryStats *stats = nullptr);
+    DISKANN_DLLEXPORT void page_search_no_pipeline(
         const T *query, const _u64 k_search, const _u32 mem_L, const _u64 l_search, _u64 *res_ids,
         float *res_dists, const _u64 beam_width, const _u32 io_limit,
         const bool use_reorder_data = false, const float use_ratio = 1.0f, QueryStats *stats = nullptr);
@@ -274,6 +311,13 @@ namespace diskann {
     bool use_page_search_ = true;
     std::vector<unsigned> id2page_;
     std::vector<std::vector<unsigned>> gp_layout_;
+
+
+    // affinity prefetch
+    bool use_affinity_ = true;
+    // bool use_affinity_ = false;
+    _u64 affinity_size_ = 1;
+    std::vector<std::vector<unsigned>> affinity_prefetch_dict_;
 
     bool use_sq_ = false;
     float* mins = nullptr;

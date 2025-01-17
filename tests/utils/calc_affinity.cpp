@@ -150,9 +150,11 @@ public:
     size_t maximum_block_key;
     size_t maximum_block_value;
     size_t maximum_block_value_10_sum;
+    std::vector<unsigned> top_10_block_id;
     Block(){};
     ~Block(){
         this->out_block.clear();
+        this->top_10_block_id.clear();
     };
 
     void anaylze(){
@@ -201,8 +203,10 @@ public:
 
 
         this->maximum_block_value_10_sum = 0;
+        this->top_10_block_id.clear();
         for(size_t i = 0; i<10;i++){
             this->maximum_block_value_10_sum += sorted_values[i];
+            this->top_10_block_id.push_back(sorted_keys[i]);
         }
 
     }
@@ -434,6 +438,9 @@ void stat_block_outdegree(
   std::vector<size_t> out_degree(block_nums);
   std::vector<size_t> max_out_num(block_nums);
   std::vector<size_t> max_out_num_top10_sum(block_nums);
+  std::vector<std::vector<size_t>> top_10_block_id_for_each(block_nums);
+
+
   // 释放内存
   #pragma omp parallel for
   for(size_t i = 0 ; i < block_nums;i++){
@@ -443,6 +450,9 @@ void stat_block_outdegree(
       out_degree[i] = block_affinity_graph[i].out_degree;
       max_out_num[i] = block_affinity_graph[i].maximum_block_value;
       max_out_num_top10_sum[i] = block_affinity_graph[i].maximum_block_value_10_sum;
+      for(int j = 0;j<10;j++){
+        top_10_block_id_for_each[i].push_back(block_affinity_graph[i].top_10_block_id[j]);
+      }
       // if(i<10){
       //     diskann::cout<<ratio<<std::endl;
       // }
@@ -485,6 +495,22 @@ void stat_block_outdegree(
   std::cout << "Average out-block_num: " << avg << std::endl;
   avg = calculateAverageOutDegree(max_out_num_top10_sum);
   std::cout << "Average out-block_num top 10 sum : " << avg << std::endl;
+
+
+  std::string output_blockprefetch_path = index_path_prefix+"_block_prefetch";
+  if(use_page_search){
+    output_blockprefetch_path = output_blockprefetch_path+"_PS"+std::to_string(1)+".bin";
+  }
+  else{
+    output_blockprefetch_path = output_blockprefetch_path+"_PS"+std::to_string(0)+".bin";
+  }
+  std::cout<<"Output block prefetch file: "<<output_blockprefetch_path<<std::endl;
+  cached_ofstream blockprefetch_writer(output_blockprefetch_path, write_blk_size);
+  blockprefetch_writer.write((char*) &block_nums,sizeof(_u64));
+  for (unsigned i = 0; i < block_nums; i++) {
+    blockprefetch_writer.write((char*)top_10_block_id_for_each[i].data(), sizeof(unsigned)* 10);
+  }
+
 
   return;
 }

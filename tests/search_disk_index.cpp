@@ -194,10 +194,18 @@ int search_disk_index(
   diskann::cout.precision(2);
 
   std::string recall_string = "Recall@" + std::to_string(recall_at);
-  diskann::cout << std::setw(6) << "L" << std::setw(12) << "Beamwidth"
-                << std::setw(16) << "QPS" << std::setw(16) << "Mean Latency"
-                << std::setw(16) << "99.9 Latency" << std::setw(16)
-                << "Mean IOs" << std::setw(16) << "CPU (s)"
+  diskann::cout << std::setw(6) << "L" 
+                << std::setw(12) << "Beamwidth"
+                << std::setw(16) << "QPS"
+                << std::setw(16) << "Mean Latency"
+                << std::setw(16) << "P99.9 Latency"
+                << std::setw(16) << "P90 Latency"
+                << std::setw(16) << "Mean IOs" 
+                << std::setw(16) << "Mean IO (us)"
+                << std::setw(16) << "CPU (us)"
+                << std::setw(16) << "Mean hops"
+                << std::setw(16) << "Mean cache_hits"
+                << std::setw(16) << "Aff. cache n"
                 << std::setw(20) << "B4 Load In-Mem"
                 << std::setw(20) << "After Load Cache"
                 << std::setw(15) << "Peak Mem(MB)";
@@ -207,7 +215,8 @@ int search_disk_index(
     diskann::cout << std::endl;
   diskann::cout
       << "==============================================================="
-         "======================================================="
+         "==============================================================="
+         "==============================================================="
       << std::endl;
 
   std::vector<std::vector<uint32_t>> query_result_ids(Lvec.size());
@@ -291,14 +300,31 @@ int search_disk_index(
     auto latency_999 = diskann::get_percentile_stats<float>(
         stats, query_num, 0.999,
         [](const diskann::QueryStats& stats) { return stats.total_us; });
+    auto latency_90 = diskann::get_percentile_stats<float>(
+        stats, query_num, 0.90,
+        [](const diskann::QueryStats& stats) { return stats.total_us; });
 
     auto mean_ios = diskann::get_mean_stats<unsigned>(
         stats, query_num,
         [](const diskann::QueryStats& stats) { return stats.n_ios; });
+    
+    auto mean_ious = diskann::get_mean_stats<float>(
+        stats, query_num,
+        [](const diskann::QueryStats &stats) { return stats.io_us; });
 
     auto mean_cpus = diskann::get_mean_stats<float>(
         stats, query_num,
         [](const diskann::QueryStats& stats) { return stats.cpu_us; });
+
+    auto mean_hops = diskann::get_mean_stats<unsigned>(
+        stats, query_num,
+        [](const diskann::QueryStats& stats) { return stats.n_hops; });
+    auto mean_cache_hits = diskann::get_mean_stats<unsigned>(
+        stats, query_num,
+        [](const diskann::QueryStats& stats) { return stats.n_cache_hits; });
+    auto n_aff_cache_nodes = diskann::get_mean_stats<unsigned>(
+        stats, query_num,
+        [](const diskann::QueryStats& stats) { return stats.n_affinity_cache; });
 
     float recall = 0;
     if (calc_recall_flag) {
@@ -307,10 +333,18 @@ int search_disk_index(
                                          recall_at, recall_at);
     }
 
-    diskann::cout << std::setw(6) << L << std::setw(12) << optimized_beamwidth
-                  << std::setw(16) << qps << std::setw(16) << mean_latency
-                  << std::setw(16) << latency_999 << std::setw(16) << mean_ios
+    diskann::cout << std::setw(6) << L
+                  << std::setw(12) << optimized_beamwidth
+                  << std::setw(16) << qps
+                  << std::setw(16) << mean_latency
+                  << std::setw(16) << latency_999
+                  << std::setw(16) << latency_90
+                  << std::setw(16) << mean_ios
+                  << std::setw(16) << mean_ious
                   << std::setw(16) << mean_cpus
+                  << std::setw(16) << mean_hops
+                  << std::setw(16) << mean_cache_hits
+                  << std::setw(16) << n_aff_cache_nodes
                   << std::setw(20) << load_mem
                   << std::setw(20) << cache_mem
                   << std::setw(15) << getProcessPeakRSS();
@@ -321,7 +355,8 @@ int search_disk_index(
     
 
 
-    {// save block path
+    {
+      // save block path
       std::string  block_path_filename =
                   result_output_prefix + "_block_path" +"_L" + std::to_string(L)+ "_B"+ std::to_string(optimized_beamwidth) +"_T"+std::to_string(num_threads)+ ".bin";
       std::ofstream outFile(block_path_filename, std::ios::binary);
