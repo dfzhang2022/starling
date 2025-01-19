@@ -160,7 +160,7 @@ namespace diskann {
   template<typename T>
   void PQFlashIndex<T>::init_prefetch_cache_list(const size_t prefetch_block_size) {
     // diskann::cout << "Init the cache in memory for block_prefetch.. size: "<<prefetch_block_size <<"*4KB" << std::flush;
-    _u64 num_cached_nodes = prefetch_block_size*nnodes_per_sector;
+    // _u64 num_cached_nodes = prefetch_block_size*nnodes_per_sector;
 
     
 
@@ -189,7 +189,7 @@ namespace diskann {
     // this->thread_data.push(this_thread_data);
     // this->thread_data.push_notify_all();
     // diskann::cout << "..done." << std::endl;
-
+    return ;
   }
 
   template<typename T>
@@ -1017,6 +1017,7 @@ namespace diskann {
                        dists_out);
     };
     Timer                 query_timer, io_timer, cpu_timer;
+    query_timer.reset();
     std::vector<Neighbor> retset(l_search + 1);
     tsl::robin_set<_u64> &visited = *(query_scratch->visited);
 
@@ -1133,7 +1134,7 @@ namespace diskann {
           if (stats != nullptr) {
             stats->n_4k++;
             stats->n_ios++;
-            block_visited_in_this_iter.push_back( BlockVisited(NODE_SECTOR_NO(((size_t) id)), std::chrono::high_resolution_clock::now()));
+            block_visited_in_this_iter.push_back( BlockVisited(((_u64)(id)) / nnodes_per_sector, std::chrono::high_resolution_clock::now()));
           }
           num_ios++;
         }

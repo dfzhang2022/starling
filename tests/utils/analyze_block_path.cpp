@@ -75,14 +75,21 @@ void analyzeData(const std::vector<std::vector<BlockVisited>> &data,float time_w
     std::map<int, std::vector<uint64_t>> time_window_blocks; // 时间窗口 -> 块ID列表
 
     // 将数据分组到时间窗口
+    int cnt = 0;
     for (const auto &inner_vec : data) {
         for (const auto &block : inner_vec) {
-            int window_index = static_cast<int>(block.timestamp / (time_window_size_in_s*1000*1000)); // 时间窗口索引
+            while(cnt<10){
+                std::cout<<block.timestamp<<std::endl;
+                cnt++;
+            }
+            int window_index = static_cast<int>(block.timestamp / (time_window_size_in_s)); // 时间窗口索引
             time_window_blocks[window_index].push_back(block.block_id);
         }
     }
 
     // 输出分析结果
+    std::cout << "Window scale: "<<time_window_size_in_s<<std::endl;
+    std::cout << "Window size: "<<time_window_blocks.size()<<std::endl;
     std::cout << std::fixed << std::setprecision(2);
     std::cout << std::setw(20) << "Time Window (s) "<<"| Total Blocks | Duplicate Blocks | Duplicate Ratio (%)\n";
     std::cout << "-----------------------------------------------------------------------\n";

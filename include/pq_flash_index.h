@@ -314,8 +314,8 @@ namespace diskann {
 
 
     // affinity prefetch
-    bool use_affinity_ = true;
-    // bool use_affinity_ = false;
+    // bool use_affinity_ = true;
+    bool use_affinity_ = false;
     _u64 affinity_size_ = 1;
     std::vector<std::vector<unsigned>> affinity_prefetch_dict_;
 

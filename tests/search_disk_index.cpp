@@ -217,6 +217,7 @@ int search_disk_index(
       << "==============================================================="
          "==============================================================="
          "==============================================================="
+         "============================================================"
       << std::endl;
 
   std::vector<std::vector<uint32_t>> query_result_ids(Lvec.size());
@@ -264,11 +265,34 @@ int search_disk_index(
       }else{
   #pragma omp parallel for schedule(dynamic, 1)
         for (_s64 i = 0; i < (int64_t) query_num; i++) {
-          _pFlashIndex->page_search(
+          // // 获取当前线程的 ID
+          // int thread_id = omp_get_thread_num();
+
+          // // 设置线程亲和性，绑定到特定的核心
+          // // 假设每个线程绑定到 CPU 核心 0, 1, 2, ..., n-1
+          // cpu_set_t cpuset;
+          // CPU_ZERO(&cpuset);
+          // CPU_SET(thread_id%num_threads, &cpuset);
+
+          // // 设置当前线程的 CPU 亲和性
+          // int ret = sched_setaffinity(0, sizeof(cpu_set_t), &cpuset);
+          // if (ret != 0) {
+          //     std::cerr << "Error setting thread affinity!" << std::endl;
+          // }
+          bool pipeline = true;
+          if(pipeline){
+            _pFlashIndex->page_search(
+                query + (i * query_aligned_dim), recall_at, mem_L, L,
+                query_result_ids_64.data() + (i * recall_at),
+                query_result_dists[test_id].data() + (i * recall_at),
+                optimized_beamwidth, search_io_limit, use_reorder_data, use_ratio, stats + i);
+          }else{
+            _pFlashIndex->page_search_no_pipeline(
               query + (i * query_aligned_dim), recall_at, mem_L, L,
               query_result_ids_64.data() + (i * recall_at),
               query_result_dists[test_id].data() + (i * recall_at),
               optimized_beamwidth, search_io_limit, use_reorder_data, use_ratio, stats + i);
+          }
         }
       }
     } else {
@@ -352,36 +376,84 @@ int search_disk_index(
       diskann::cout << std::setw(16) << recall << std::endl;
     } else
       diskann::cout << std::endl;
-    
+    diskann::cout << "L" 
+                << ","<< "#Threads"
+                << ","<< "QPS"
+                << ","<< "Mean Latency"
+                << ","<< "P99.9 Latency"
+                << ","<< "P90 Latency"
+                << ","<< "Mean IOs" 
+                << ","<< "Mean IO (us)"
+                << ","<< "CPU (us)"
+                << ","<< "Mean hops"
+                << ","<< "Mean cache_hits"
+                << ","<< "Aff. cache n"
+                << ","<< "B4 Load In-Mem"
+                << ","<< "After Load Cache"
+                << ","<< "Peak Mem(MB)";
+  if (calc_recall_flag) {
+    diskann::cout << "," << recall_string << std::endl;
+  } else
+    diskann::cout << std::endl;
 
+  diskann::cout << L
+                  << "," << num_threads
+                  << "," << optimized_beamwidth
+                  << ","<< qps
+                  << ","<< mean_latency
+                  << ","<< latency_999
+                  << ","<< latency_90
+                  << ","<< mean_ios
+                  << ","<< mean_ious
+                  << ","<< mean_cpus
+                  << ","<< mean_hops
+                  << ","<< mean_cache_hits
+                  << ","<< n_aff_cache_nodes
+                  << ","<< load_mem
+                  << ","<< cache_mem
+                  << ","<< getProcessPeakRSS();
+    if (calc_recall_flag) {
+      diskann::cout << "," << recall << std::endl;
+    } else
+      diskann::cout << std::endl;
 
     {
       // save block path
-      std::string  block_path_filename =
-                  result_output_prefix + "_block_path" +"_L" + std::to_string(L)+ "_B"+ std::to_string(optimized_beamwidth) +"_T"+std::to_string(num_threads)+ ".bin";
-      std::ofstream outFile(block_path_filename, std::ios::binary);
+      std::string  block_path_prefix =
+                  result_output_prefix + "_block_path" +"_L" + std::to_string(L)+"_PS"+std::to_string(use_page_search)+ "_B"+ std::to_string(optimized_beamwidth) +"_T"+std::to_string(num_threads);
+      std::string block_path_with_timestamp = block_path_prefix+"_withts.bin";
+      std::string block_path_no_timestamp = block_path_prefix+"_nots.txt";;
+      std::ofstream outFile(block_path_with_timestamp, std::ios::binary);
+      std::ofstream outFile_no_ts(block_path_no_timestamp, std::ios::binary);
       if (!outFile) {
-          std::cerr << "Failed to open file for writing: " << block_path_filename << std::endl;
+          std::cerr << "Failed to open file for writing: " << block_path_with_timestamp << std::endl;
+      }else if(!outFile_no_ts){
+          std::cerr << "Failed to open file for writing: " << block_path_no_timestamp << std::endl;
       }else{
         // 写入 query 数量
         // size_t query_num = queries.size();
         outFile.write(reinterpret_cast<const char*>(&query_num), sizeof(query_num));
+        outFile_no_ts<<std::to_string(query_num)<<std::endl;
         // 遍历每个查
         for (_s64 i = 0; i < (int64_t) query_num; i++) {
           size_t block_num = stats[i].block_visited_queue.size();
           outFile.write(reinterpret_cast<const char*>(&block_num), sizeof(block_num));
+          outFile_no_ts<<std::to_string(block_num);
           // 写入每个 BlockVisited
             for (const auto& block : stats[i].block_visited_queue) {
                 // 写入 block_id
                 outFile.write(reinterpret_cast<const char*>(&block.block_id), sizeof(block.block_id));
+                outFile_no_ts<<" "<<std::to_string(block.block_id);
 
                 // 将 timestamp 转换为 float（秒数）并写入
                 std::chrono::duration<double> diff = block.timestamp - s;
                 float timestamp_float =  diff.count();
                 outFile.write(reinterpret_cast<const char*>(&timestamp_float), sizeof(timestamp_float));
             }
+          outFile_no_ts<<std::endl;
         }
         outFile.close();
+        outFile_no_ts.close();
       }
       
     }
