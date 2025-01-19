@@ -29,6 +29,7 @@
 #define FULL_PRECISION_REORDER_MULTIPLIER 3
 
 namespace diskann {
+  void boost_example();
   template<typename T>
   struct QueryScratch {
     T *  coord_scratch = nullptr;  // MUST BE AT LEAST [MAX_N_CMPS * data_dim]
@@ -177,6 +178,10 @@ namespace diskann {
         float *res_dists, const _u64 beam_width, const _u32 io_limit,
         const bool use_reorder_data = false, const float use_ratio = 1.0f, QueryStats *stats = nullptr);
     DISKANN_DLLEXPORT void page_search_sq(
+        const T *query, const _u64 k_search, const _u32 mem_L, const _u64 l_search, _u64 *res_ids,
+        float *res_dists, const _u64 beam_width, const _u32 io_limit,
+        const bool use_reorder_data = false, const float use_ratio = 1.0f, QueryStats *stats = nullptr);
+    DISKANN_DLLEXPORT void async_search(
         const T *query, const _u64 k_search, const _u32 mem_L, const _u64 l_search, _u64 *res_ids,
         float *res_dists, const _u64 beam_width, const _u32 io_limit,
         const bool use_reorder_data = false, const float use_ratio = 1.0f, QueryStats *stats = nullptr);

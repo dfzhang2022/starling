@@ -292,6 +292,12 @@ int search_disk_index(
               query_result_ids_64.data() + (i * recall_at),
               query_result_dists[test_id].data() + (i * recall_at),
               optimized_beamwidth, search_io_limit, use_reorder_data, use_ratio, stats + i);
+              // diskann::boost_example();
+          }
+
+          bool boost = true;
+          if (boost){
+            // TODO  Build the coroutine search
           }
         }
       }
