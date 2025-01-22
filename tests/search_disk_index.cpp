@@ -63,6 +63,7 @@ int search_disk_index(
     const _u32 search_io_limit, const std::vector<unsigned>& Lvec,
     const _u32 mem_L,
     const bool use_page_search=true,
+    const bool use_coro = false,
     const float use_ratio=1.0,
     const bool use_reorder_data = false,
     const bool use_sq = false) {
@@ -249,7 +250,7 @@ int search_disk_index(
 
     std::vector<uint64_t> query_result_ids_64(recall_at * query_num);
     auto                  s = std::chrono::high_resolution_clock::now();
-
+    // query_num = 1;
     // Using branching outside the for loop instead of inside and 
     // std::function/std::mem_fn for less switching and function calling overhead
     if (use_page_search) {
@@ -263,43 +264,55 @@ int search_disk_index(
               optimized_beamwidth, search_io_limit, use_reorder_data, use_ratio, stats + i);
         }
       }else{
-  #pragma omp parallel for schedule(dynamic, 1)
-        for (_s64 i = 0; i < (int64_t) query_num; i++) {
-          // // 获取当前线程的 ID
-          // int thread_id = omp_get_thread_num();
-
-          // // 设置线程亲和性，绑定到特定的核心
-          // // 假设每个线程绑定到 CPU 核心 0, 1, 2, ..., n-1
-          // cpu_set_t cpuset;
-          // CPU_ZERO(&cpuset);
-          // CPU_SET(thread_id%num_threads, &cpuset);
-
-          // // 设置当前线程的 CPU 亲和性
-          // int ret = sched_setaffinity(0, sizeof(cpu_set_t), &cpuset);
-          // if (ret != 0) {
-          //     std::cerr << "Error setting thread affinity!" << std::endl;
-          // }
-          bool pipeline = true;
-          if(pipeline){
-            _pFlashIndex->page_search(
+        if (use_coro) {
+          std::cout << "Using coro" << std::endl;
+#pragma omp parallel for schedule(dynamic, 1)
+          for (_s64 i = 0; i < (int64_t) query_num; i++) {
+            _pFlashIndex->async_search(
                 query + (i * query_aligned_dim), recall_at, mem_L, L,
                 query_result_ids_64.data() + (i * recall_at),
                 query_result_dists[test_id].data() + (i * recall_at),
-                optimized_beamwidth, search_io_limit, use_reorder_data, use_ratio, stats + i);
-          }else{
-            _pFlashIndex->page_search_no_pipeline(
-              query + (i * query_aligned_dim), recall_at, mem_L, L,
-              query_result_ids_64.data() + (i * recall_at),
-              query_result_dists[test_id].data() + (i * recall_at),
-              optimized_beamwidth, search_io_limit, use_reorder_data, use_ratio, stats + i);
-              // diskann::boost_example();
+                optimized_beamwidth, search_io_limit, use_reorder_data,
+                use_ratio, stats + i);
           }
+          } else {
+            // // 获取当前线程的 ID
+            // int thread_id = omp_get_thread_num();
 
-          bool boost = true;
-          if (boost){
-            // TODO  Build the coroutine search
-          }
-        }
+            // // 设置线程亲和性，绑定到特定的核心
+            // // 假设每个线程绑定到 CPU 核心 0, 1, 2, ..., n-1
+            // cpu_set_t cpuset;
+            // CPU_ZERO(&cpuset);
+            // CPU_SET(thread_id%num_threads, &cpuset);
+
+            // // 设置当前线程的 CPU 亲和性
+            // int ret = sched_setaffinity(0, sizeof(cpu_set_t), &cpuset);
+            // if (ret != 0) {
+            //     std::cerr << "Error setting thread affinity!" << std::endl;
+            // }
+            bool pipeline = false;
+            if (pipeline) {
+#pragma omp parallel for schedule(dynamic, 1)
+              for (_s64 i = 0; i < (int64_t) query_num; i++) {
+                _pFlashIndex->page_search(
+                    query + (i * query_aligned_dim), recall_at, mem_L, L,
+                    query_result_ids_64.data() + (i * recall_at),
+                    query_result_dists[test_id].data() + (i * recall_at),
+                    optimized_beamwidth, search_io_limit, use_reorder_data,
+                    use_ratio, stats + i);
+              }
+              } else {
+#pragma omp parallel for schedule(dynamic, 1)
+              for (_s64 i = 0; i < (int64_t) query_num; i++) {
+                _pFlashIndex->page_search_no_pipeline(
+                    query + (i * query_aligned_dim), recall_at, mem_L, L,
+                    query_result_ids_64.data() + (i * recall_at),
+                    query_result_dists[test_id].data() + (i * recall_at),
+                    optimized_beamwidth, search_io_limit, use_reorder_data,
+                    use_ratio, stats + i);
+              }
+              }
+            }
       }
     } else {
       if(use_sq){
@@ -384,6 +397,7 @@ int search_disk_index(
       diskann::cout << std::endl;
     diskann::cout << "L" 
                 << ","<< "#Threads"
+                << ","<< "Beamwidth"
                 << ","<< "QPS"
                 << ","<< "Mean Latency"
                 << ","<< "P99.9 Latency"
@@ -499,6 +513,8 @@ int main(int argc, char** argv) {
   std::vector<unsigned> Lvec;
   bool                  use_reorder_data = false;
   bool                  use_page_search = true;
+  bool                  page_expansion = true;
+  bool                  use_coro = false;
   float                 use_ratio = 1.0;
   bool use_sq = false;
 
@@ -554,6 +570,10 @@ int main(int argc, char** argv) {
                        "The L of the in-memory navigation graph while searching. Use 0 to disable");
     desc.add_options()("use_page_search", po::value<bool>(&use_page_search)->default_value(1),
                        "Use 1 for page search (default), 0 for DiskANN beam search");
+    desc.add_options()("page_expansion", po::value<bool>(&page_expansion)->default_value(1),
+                       "Use 1 for using page_expansion in search (default), 0 for node_expansion");
+    desc.add_options()("use_coro", po::value<bool>(&use_coro)->default_value(0),
+                       "Use 1 for using coroutine in IO, 0 for using coroutine (default).");
     desc.add_options()("use_ratio", po::value<float>(&use_ratio)->default_value(1.0f),
                        "The percentage of how many vectors in a page to search each time");
     desc.add_options()("disk_file_path", po::value<std::string>(&disk_file_path)->required(),
@@ -623,19 +643,19 @@ int main(int argc, char** argv) {
                                       result_path_prefix, query_file, gt_file,
                                       disk_file_path,
                                       num_threads, K, W, num_nodes_to_cache,
-                                      search_io_limit, Lvec, mem_L, use_page_search, use_ratio, use_reorder_data, use_sq);
+                                      search_io_limit, Lvec, mem_L, use_page_search, use_coro, use_ratio, use_reorder_data, use_sq);
     else if (data_type == std::string("int8"))
       return search_disk_index<int8_t>(metric, index_path_prefix,
                                        mem_index_path,
                                        result_path_prefix, query_file, gt_file,
                                        disk_file_path,
                                        num_threads, K, W, num_nodes_to_cache,
-                                       search_io_limit, Lvec, mem_L, use_page_search, use_ratio, use_reorder_data);
+                                       search_io_limit, Lvec, mem_L, use_page_search, use_coro, use_ratio, use_reorder_data);
     else if (data_type == std::string("uint8"))
       return search_disk_index<uint8_t>(
           metric, index_path_prefix, mem_index_path, result_path_prefix, query_file, gt_file,
           disk_file_path, num_threads, K, W, num_nodes_to_cache, search_io_limit, Lvec, mem_L,
-          use_page_search, use_ratio, use_reorder_data);
+          use_page_search, use_coro, use_ratio, use_reorder_data);
     else {
       std::cerr << "Unsupported data type. Use float or int8 or uint8"
                 << std::endl;

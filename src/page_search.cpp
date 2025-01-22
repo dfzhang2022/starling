@@ -220,8 +220,13 @@ namespace diskann {
     last_io_ids.reserve(2 * beam_width);
     std::vector<char> last_pages(SECTOR_LEN * beam_width * 2);
     int n_ops = 0;
-
+    
     while (k < cur_list_size && num_ios < io_limit) {
+      if (this->verbose_) {
+        std::cout << cur_list_size << "," << k
+                  << ", fullret_size: " << full_retset.size() << std::endl;
+        std::cout << retset[k].print() << std::endl;
+      }
       unsigned nk = cur_list_size;
       // clear iteration state
       frontier.clear();
@@ -326,7 +331,9 @@ namespace diskann {
 
         io_timer.reset();
 
-
+  if(verbose_){      size_t coro_size = frontier_read_reqs.size();
+        std::cout<<"Begin"<<std::endl;
+        std::cout<<coro_size<<std::endl;}
         n_ops = reader->submit_reqs(frontier_read_reqs, ctx);
         if (this->count_visited_nodes) {
 #pragma omp critical
@@ -388,6 +395,8 @@ namespace diskann {
       // get last submitted io results, blocking
       if (!frontier.empty()) {
         reader->get_events(ctx, n_ops);
+        if(verbose_){std::cout<<io_timer.elapsed()<<std::endl;
+        std::cout<<"End"<<std::endl;}
 
         if (stats != nullptr) {
             stats->io_us += (double) io_timer.elapsed();
@@ -510,9 +519,10 @@ namespace diskann {
 
   template<typename T>
   void PQFlashIndex<T>::page_search_no_pipeline(
-      const T *query1, const _u64 k_search, const _u32 mem_L, const _u64 l_search, _u64 *indices,
-      float *distances, const _u64 beam_width, const _u32 io_limit,
-      const bool use_reorder_data, const float use_ratio, QueryStats *stats) {
+      const T *query1, const _u64 k_search, const _u32 mem_L,
+      const _u64 l_search, _u64 *indices, float *distances,
+      const _u64 beam_width, const _u32 io_limit, const bool use_reorder_data,
+      const float use_ratio, QueryStats *stats) {
     ThreadData<T> data = this->thread_data.pop();
     while (data.scratch.sector_scratch == nullptr) {
       this->thread_data.wait_for_push_notify();
@@ -692,9 +702,14 @@ namespace diskann {
     std::vector<unsigned> last_io_ids;
     last_io_ids.reserve(2 * beam_width);
     std::vector<char> last_pages(SECTOR_LEN * beam_width * 2);
-    // int n_ops = 0;
+    int n_ops = 0;
 
     while (k < cur_list_size && num_ios < io_limit) {
+      if (this->verbose_) {
+        std::cout << cur_list_size << "," << k
+                  << ", fullret_size: " << full_retset.size() << std::endl;
+        std::cout << retset[k].print() << std::endl;
+      }
       unsigned nk = cur_list_size;
       // clear iteration state
       frontier.clear();
@@ -793,7 +808,16 @@ namespace diskann {
         }
 
         io_timer.reset();
-        reader->read(frontier_read_reqs, ctx);  // synchronous IO linux
+        // reader->read(frontier_read_reqs, ctx);  // synchronous IO linux
+        if (this->verbose_) {
+          std::cout << "Begin" << std::endl;
+        }
+        n_ops = reader->submit_reqs(frontier_read_reqs, ctx);
+        reader->get_events(ctx, n_ops);
+        if (this->verbose_) {
+          std::cout << io_timer.elapsed() << std::endl;
+          std::cout << "End" << std::endl;
+        }
 
         if (stats != nullptr) {
             stats->io_us += (double) io_timer.elapsed();
