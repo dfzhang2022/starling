@@ -391,6 +391,7 @@ namespace diskann {
       if (stats != nullptr) {
         stats->cpu_us += (double) cpu_timer.elapsed();
       }
+      // TODO 记录这部分io时间和计算时间到底是谁等谁
 
       // get last submitted io results, blocking
       if (!frontier.empty()) {

@@ -78,6 +78,17 @@ namespace diskann {
     return avg / len;
   }
 
+  template<typename T>
+  inline double get_sum_stats(
+      QueryStats *stats, uint64_t len,
+      const std::function<T(const QueryStats &)> &member_fn) {
+    double sum = 0;
+    for (uint64_t i = 0; i < len; i++) {
+      sum += (double) member_fn(stats[i]);
+    }
+    return sum;
+  }
+
   // The following two functions are used when getting statistics while range searching on only queries with
   // non-zero gt lengths
   template<typename T>

@@ -123,6 +123,8 @@ int search_disk_index(
     return res;
   }
 
+  _pFlashIndex->set_query_aligned_dim(query_aligned_dim);
+
   size_t load_mem = getCurrentRSS();
 
   // load in-memory navigation graph
@@ -201,6 +203,7 @@ int search_disk_index(
                 << std::setw(16) << "Mean Latency"
                 << std::setw(16) << "P99.9 Latency"
                 << std::setw(16) << "P90 Latency"
+                << std::setw(16) << "IOps"
                 << std::setw(16) << "Mean IOs" 
                 << std::setw(16) << "Mean IO (us)"
                 << std::setw(16) << "CPU (us)"
@@ -250,7 +253,8 @@ int search_disk_index(
 
     std::vector<uint64_t> query_result_ids_64(recall_at * query_num);
     auto                  s = std::chrono::high_resolution_clock::now();
-    // query_num = 1;
+    query_num = 10000;
+    // _pFlashIndex->verbose_ = true;
     // Using branching outside the for loop instead of inside and 
     // std::function/std::mem_fn for less switching and function calling overhead
     if (use_page_search) {
@@ -266,15 +270,20 @@ int search_disk_index(
       }else{
         if (use_coro) {
           std::cout << "Using coro" << std::endl;
-#pragma omp parallel for schedule(dynamic, 1)
-          for (_s64 i = 0; i < (int64_t) query_num; i++) {
-            _pFlashIndex->async_search(
-                query + (i * query_aligned_dim), recall_at, mem_L, L,
-                query_result_ids_64.data() + (i * recall_at),
-                query_result_dists[test_id].data() + (i * recall_at),
-                optimized_beamwidth, search_io_limit, use_reorder_data,
-                use_ratio, stats + i);
-          }
+// #pragma omp parallel for schedule(dynamic, 1)
+//           for (_s64 i = 0; i < (int64_t) query_num; i++) {
+//             _pFlashIndex->async_search(
+//                 query + (i * query_aligned_dim), recall_at, mem_L, L,
+//                 query_result_ids_64.data() + (i * recall_at),
+//                 query_result_dists[test_id].data() + (i * recall_at),
+//                 optimized_beamwidth, search_io_limit, use_reorder_data,
+//                 use_ratio, stats + i);
+//           }
+
+          _pFlashIndex->bqann_search(
+              query, query_num, recall_at, mem_L, L, query_result_ids_64.data(),
+              query_result_dists[test_id].data(), optimized_beamwidth,
+              search_io_limit, use_reorder_data, use_ratio, stats);
           } else {
             // // 获取当前线程的 ID
             // int thread_id = omp_get_thread_num();
@@ -290,10 +299,15 @@ int search_disk_index(
             // if (ret != 0) {
             //     std::cerr << "Error setting thread affinity!" << std::endl;
             // }
-            bool pipeline = false;
+            bool pipeline = true;
             if (pipeline) {
+              std::cout << "Pipeline" << std::endl;
 #pragma omp parallel for schedule(dynamic, 1)
               for (_s64 i = 0; i < (int64_t) query_num; i++) {
+
+                // TODO 绑核 只执行一次绑核的逻辑
+                // TODO 打印每个线程的执行的时间
+
                 _pFlashIndex->page_search(
                     query + (i * query_aligned_dim), recall_at, mem_L, L,
                     query_result_ids_64.data() + (i * recall_at),
@@ -302,6 +316,7 @@ int search_disk_index(
                     use_ratio, stats + i);
               }
               } else {
+              std::cout << "No pipeline" << std::endl;
 #pragma omp parallel for schedule(dynamic, 1)
               for (_s64 i = 0; i < (int64_t) query_num; i++) {
                 _pFlashIndex->page_search_no_pipeline(
@@ -350,6 +365,10 @@ int search_disk_index(
     auto mean_ios = diskann::get_mean_stats<unsigned>(
         stats, query_num,
         [](const diskann::QueryStats& stats) { return stats.n_ios; });
+
+    auto sum_ios = diskann::get_sum_stats<unsigned>(
+        stats, query_num,
+        [](const diskann::QueryStats& stats) { return stats.n_ios; });
     
     auto mean_ious = diskann::get_mean_stats<float>(
         stats, query_num,
@@ -368,6 +387,8 @@ int search_disk_index(
     auto n_aff_cache_nodes = diskann::get_mean_stats<unsigned>(
         stats, query_num,
         [](const diskann::QueryStats& stats) { return stats.n_affinity_cache; });
+    
+    float iops = (1.0 * sum_ios) / (1.0 * diff.count());
 
     float recall = 0;
     if (calc_recall_flag) {
@@ -382,6 +403,7 @@ int search_disk_index(
                   << std::setw(16) << mean_latency
                   << std::setw(16) << latency_999
                   << std::setw(16) << latency_90
+                  << std::setw(16) << iops
                   << std::setw(16) << mean_ios
                   << std::setw(16) << mean_ious
                   << std::setw(16) << mean_cpus
@@ -402,6 +424,7 @@ int search_disk_index(
                 << ","<< "Mean Latency"
                 << ","<< "P99.9 Latency"
                 << ","<< "P90 Latency"
+                << ","<< "IOps"
                 << ","<< "Mean IOs" 
                 << ","<< "Mean IO (us)"
                 << ","<< "CPU (us)"
@@ -423,6 +446,7 @@ int search_disk_index(
                   << ","<< mean_latency
                   << ","<< latency_999
                   << ","<< latency_90
+                  << ","<< iops
                   << ","<< mean_ios
                   << ","<< mean_ious
                   << ","<< mean_cpus

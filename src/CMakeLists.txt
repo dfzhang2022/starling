@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT license.
 
-set(CMAKE_CXX_STANDARD 17)
-add_subdirectory(${CMAKE_SOURCE_DIR}/src/storage)
-include_directories(/home/dfzhang/starling/src/storage/src/storage)
+set(CMAKE_CXX_STANDARD 20)
+# add_subdirectory(${CMAKE_SOURCE_DIR}/src/storage)
+# include_directories(/home/dfzhang/starling/src/storage/src/storage)
 if(MSVC)
     add_subdirectory(dll)
 else()
@@ -15,7 +15,7 @@ else()
         range_search.cpp)
     add_library(${PROJECT_NAME} ${CPP_SOURCES})
     add_library(${PROJECT_NAME}_s STATIC ${CPP_SOURCES})
-    target_link_libraries(${PROJECT_NAME} PRIVATE storage)
-    target_link_libraries(${PROJECT_NAME}_s PRIVATE storage)
+    target_link_libraries(${PROJECT_NAME} PRIVATE uring cppcoro)
+    target_link_libraries(${PROJECT_NAME}_s PRIVATE uring cppcoro)
 endif()
 install()

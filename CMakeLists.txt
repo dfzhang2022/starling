@@ -28,10 +28,10 @@ else()
 	cmake_minimum_required(VERSION 2.8)
 endif()
 
-set(CMAKE_STANDARD 14)
+set(CMAKE_STANDARD 20)
 
 if(NOT MSVC)
-	set(CMAKE_CXX_COMPILER g++)
+	set(CMAKE_CXX_COMPILER /usr/bin/g++-12)
 endif()
 
 # Install nuget packages for dependencies.
@@ -234,7 +234,7 @@ else()
 	set(ENV{TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD} 500000000000)
     #	set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -DDEBUG -O0 -fsanitize=address -fsanitize=leak -fsanitize=undefined")
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -DDEBUG -Wall -Wextra")
-	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Ofast -DNDEBUG -march=native -mtune=native -ftree-vectorize")
+	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -std=c++20 -Ofast -DNDEBUG -march=native -mtune=native -ftree-vectorize")
 	add_compile_options(-march=native -Wall -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free -fopenmp -fopenmp-simd -fcoroutines -funroll-loops -Wfatal-errors -DUSE_AVX2)
 endif()
 

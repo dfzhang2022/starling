@@ -1,3 +1,5 @@
+
+#pragma once
 #ifndef STORAGE_IO_URING_H_
 #define STORAGE_IO_URING_H_
 
@@ -8,7 +10,9 @@
 
 #include "cppcoro/coroutine.hpp"
 #include "cppcoro/task.hpp"
+#include "cppcoro/sync_wait.hpp"
 #include "liburing.h"
+#include "cppcoro/when_all_ready.hpp"
 #include "aligned_file_reader.h"
 
 #define IS_ALIGNED(X, Y) ((uint64_t)(X) % (uint64_t)(Y) == 0)
@@ -208,7 +212,7 @@ inline void BatchIOUringAwaiter::await_suspend(cppcoro::coroutine_handle<> handl
   this->coro_batch_read_data_.handle = handle;
   int cnt = 0;
   // std::cout<<"aligned_read_vec_.size()"<<aligned_read_vec_.size()<<std::endl;
-  for(int i = 0;i<this->aligned_read_vec_.size();i++){
+  for(size_t i = 0;i<this->aligned_read_vec_.size();i++){
     AlignedRead* tmp_ptr = &aligned_read_vec_[i];
     io_uring_sqe *sqe = io_uring_get_sqe(&ring_.ring_);
     if (sqe == nullptr) {
@@ -232,13 +236,18 @@ class Countdown {
  public:
   explicit Countdown(std::uint64_t counter) noexcept : counter_(counter) {}
 
-  void Decrement() noexcept { --counter_; }
+  void Decrement() noexcept {
+      mtx.lock();
+     --counter_; 
+     mtx.unlock();
+     }
 
-  bool IsZero() const noexcept { return counter_ == 0; }
+  bool IsZero() const noexcept { return counter_ <= 0; }
 
   void Set(std::uint64_t counter) noexcept { counter_ = counter; }
 
  private:
+  std::mutex mtx;
   std::uint64_t counter_;
 };
 
