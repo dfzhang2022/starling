@@ -238,11 +238,11 @@ class Countdown {
 
   void Decrement() noexcept {
       mtx.lock();
-     --counter_; 
+     counter_--; 
      mtx.unlock();
      }
 
-  bool IsZero() const noexcept { return counter_ <= 0; }
+  bool IsZero() const noexcept { return counter_ == 0; }
 
   void Set(std::uint64_t counter) noexcept { counter_ = counter; }
 

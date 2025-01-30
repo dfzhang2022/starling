@@ -62,11 +62,20 @@ struct AlignedRead {
   uint64_t len;     // how much to read
   void*    buf;     // where to read into
 
+  uint64_t block_id = -1;
+
   AlignedRead() : offset(0), len(0), buf(nullptr) {
   }
 
   AlignedRead(uint64_t offset, uint64_t len, void* buf)
       : offset(offset), len(len), buf(buf) {
+    assert(IS_512_ALIGNED(offset));
+    assert(IS_512_ALIGNED(len));
+    assert(IS_512_ALIGNED(buf));
+    // assert(malloc_usable_size(buf) >= len);
+  }
+  AlignedRead(uint64_t offset, uint64_t len, void* buf,uint64_t block_id)
+      : offset(offset), len(len), buf(buf), block_id(block_id) {
     assert(IS_512_ALIGNED(offset));
     assert(IS_512_ALIGNED(len));
     assert(IS_512_ALIGNED(buf));

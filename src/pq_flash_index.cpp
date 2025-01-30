@@ -193,19 +193,44 @@ namespace diskann {
         }
       }
     }
-    this->n_io_executing.reserve(coro_num);
-    for(size_t k = 0;k<coro_num;k++){
-      this->n_io_executing[k] = 0;
+    std::cout<<"this->coro_data size: "<<this->coro_data.size()<<std::endl;
+    this->n_io_executing.resize(nthreads);
+    for(size_t k = 0;k<nthreads;k++){
+      this->n_io_executing[k].resize(MAX_COROUTINE,0);
     }
-    this->n_io_completed.reserve(coro_num);
-    for(size_t k = 0;k<coro_num;k++){
-      this->n_io_completed[k] = 0;
+    this->n_io_completed.resize(nthreads);
+    for(size_t k = 0;k<nthreads;k++){
+      this->n_io_completed[k].resize(MAX_COROUTINE,0);
     }
     // this->coro_io_queue_mutex.reserve(coro_num);
+    // this->coro_io_queue_mutexes.resize(nthreads, std::mutex());
+    // for (size_t i = 0; i < nthreads; ++i) {
+    //   this->coro_io_queue_mutexes
+    //       .emplace_back();  // 显式使用默认构造函数添加 mutex
+    // }
+    this->io_state.resize(nthreads);
+    for(size_t k = 0;k<nthreads;k++){
+      this->io_state[k].resize(MAX_COROUTINE,IORequestState::Idle);
+    }
+    for(size_t k = 0;k<nthreads;k++){
+      this->thread_complete_io_queue.emplace_back(new ConcurrentQueue<int>());
+    }
 
-    auto result = io_uring_queue_init(64, &ring_, 0);
+    this->handles_map.resize(nthreads);
+    for (size_t k = 0; k < nthreads; k++) {
+      this->handles_map[k].resize(MAX_COROUTINE);
+    }
+    auto result = io_uring_queue_init(256, &ring_, 0);
     if (result != 0) {
-      std::cout<<"io_uring init error!"<<std::endl;
+      std::cout << "io_uring init error!" << std::endl;
+    }
+
+    this->rings_.resize(nthreads);
+    for (size_t k = 0; k < nthreads; k++) {
+      auto result = io_uring_queue_init(256, &(rings_[k]), 0);
+      if (result != 0) {
+        std::cout << "io_urings init error! " << k << std::endl;
+      }
     }
     load_flag = true;
   }

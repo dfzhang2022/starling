@@ -98,7 +98,7 @@ namespace diskann {
     float *dist_scratch = query_scratch->aligned_dist_scratch;
     _u8 *  pq_coord_scratch = query_scratch->aligned_pq_coord_scratch;
 
-    Timer                 query_timer, io_timer, cpu_timer;
+    Timer                 query_timer, io_timer, cpu_timer, bubble_timer;
     query_timer.reset();
     std::vector<Neighbor> retset(l_search + 1);
     tsl::robin_set<_u64> &visited = *(query_scratch->visited);
@@ -392,19 +392,24 @@ namespace diskann {
         stats->cpu_us += (double) cpu_timer.elapsed();
       }
       // TODO 记录这部分io时间和计算时间到底是谁等谁
+      bubble_timer.reset();
 
       // get last submitted io results, blocking
       if (!frontier.empty()) {
         reader->get_events(ctx, n_ops);
-        if(verbose_){std::cout<<io_timer.elapsed()<<std::endl;
-        std::cout<<"End"<<std::endl;}
+        if (verbose_) {
+          std::cout << io_timer.elapsed() << std::endl;
+          std::cout << "End" << std::endl;
+        }
 
         if (stats != nullptr) {
-            stats->io_us += (double) io_timer.elapsed();
-            for(auto item: block_visited_in_this_iter){
-              stats->block_visited_queue.push_back(BlockVisited(item.block_id,std::chrono::high_resolution_clock::now()));
-            }
-            block_visited_in_this_iter.clear();
+          stats->bubble_time_us +=  (double) bubble_timer.elapsed();
+          stats->io_us += (double) io_timer.elapsed();
+          for (auto item : block_visited_in_this_iter) {
+            stats->block_visited_queue.push_back(BlockVisited(
+                item.block_id, std::chrono::high_resolution_clock::now()));
+          }
+          block_visited_in_this_iter.clear();
         }
       }
 
@@ -855,48 +860,55 @@ namespace diskann {
           stats->cpu_us += (double) cpu_timer.elapsed();
         }
       }
-      
 
       cpu_timer.reset();
       // compute only the desired vectors in the pages - one for each page
       // postpone remaining vectors to the next round
       for (auto &frontier_nhood : frontier_nhoods) {
-        char *sector_buf = frontier_nhood.second;
+        char    *sector_buf = frontier_nhood.second;
         unsigned pid = id2page_[frontier_nhood.first];
-        const unsigned p_size = gp_layout_[pid].size();
+        memcpy(last_pages.data() + last_io_ids.size() * SECTOR_LEN, sector_buf,
+               SECTOR_LEN);
+        last_io_ids.emplace_back(frontier_nhood.first);
 
-        if(true){
-          unsigned vis_size = use_ratio * (p_size);
-          std::vector<std::pair<float, const char*>> vis_cand;
-          vis_cand.reserve(p_size);
-          // compute exact distances of the vectors within the page
-          for (unsigned j = 0; j < p_size; ++j) {
-            const unsigned id = gp_layout_[pid][j];
-            const char* node_buf = sector_buf + j * max_node_len;
-            float dist = compute_extact_dists_and_push(node_buf, id);
-            vis_cand.emplace_back(dist, node_buf);
-          }
-          if (vis_size && vis_size != p_size) {
-            std::sort(vis_cand.begin(), vis_cand.end());
-          }
-          // compute PQ distances for neighbours of the vectors in the page
-          for (unsigned j = 0; j < vis_size; ++j) {
-            compute_and_push_nbrs(vis_cand[j].second, nk);
-          }
-        }else{
-          // compute exact distances of the vectors within the page
-          for (unsigned j = 0; j < p_size; ++j) {
-            const unsigned id = gp_layout_[pid][j];
-            if(id == frontier_nhood.first){
-              const char* node_buf = sector_buf + j * max_node_len;
-              compute_extact_dists_and_push(node_buf, id);
-              compute_and_push_nbrs(node_buf, nk);
-            }
-            
+        for (unsigned j = 0; j < gp_layout_[pid].size(); ++j) {
+          unsigned id = gp_layout_[pid][j];
+          if (id == frontier_nhood.first) {
+            char *node_buf = sector_buf + j * max_node_len;
+            compute_extact_dists_and_push(node_buf, id);
+            compute_and_push_nbrs(node_buf, nk);
           }
         }
-        
       }
+      for (size_t i = 0; i < last_io_ids.size(); ++i) {
+        const unsigned last_io_id = last_io_ids[i];
+        char          *sector_buf = last_pages.data() + i * SECTOR_LEN;
+        const unsigned pid = id2page_[last_io_id];
+        const unsigned p_size = gp_layout_[pid].size();
+        // minus one for the vector that is computed previously
+        unsigned vis_size = use_ratio * (p_size - 1);
+        std::vector<std::pair<float, const char *>> vis_cand;
+        vis_cand.reserve(p_size);
+
+        // compute exact distances of the vectors within the page
+        for (unsigned j = 0; j < p_size; ++j) {
+          const unsigned id = gp_layout_[pid][j];
+          if (id == last_io_id)
+            continue;
+          const char *node_buf = sector_buf + j * max_node_len;
+          float       dist = compute_extact_dists_and_push(node_buf, id);
+          vis_cand.emplace_back(dist, node_buf);
+        }
+        if (vis_size && vis_size != p_size) {
+          std::sort(vis_cand.begin(), vis_cand.end());
+        }
+
+        // compute PQ distances for neighbours of the vectors in the page
+        for (unsigned j = 0; j < vis_size; ++j) {
+          compute_and_push_nbrs(vis_cand[j].second, nk);
+        }
+      }
+      last_io_ids.clear();
       if(use_affinity_){
         _u64 node_idx = 0;
         for (auto &nhood : prefetch_frontier_nhoods) {

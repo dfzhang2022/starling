@@ -35,11 +35,14 @@ namespace diskann {
     float total_us = 0;  // total time to process query in micros
     float io_us = 0;     // total time spent in IO
     float cpu_us = 0;    // total time spent in CPU
+    float executing_in_coro_us = 0;    // total time spent in coro
+    float bubble_time_us = 0;
 
     unsigned n_4k = 0;          // # of 4kB reads
     unsigned n_8k = 0;          // # of 8kB reads
     unsigned n_12k = 0;         // # of 12kB reads
     unsigned n_ios = 0;         // total # of IOs issued
+    unsigned n_io_returns = 0;  // total # of IOs uring returned
     unsigned read_size = 0;     // total # of bytes read
     unsigned n_cmps_saved = 0;  // # cmps saved
     unsigned n_cmps = 0;        // # cmps
@@ -48,6 +51,20 @@ namespace diskann {
     unsigned n_affinity_cache = 0; // # affinity nodes 
 
     std::vector<BlockVisited> block_visited_queue;
+  };
+
+  struct ThreadStats {
+    float total_us = 0;  // total time to executing one thread in micross
+    float io_us = 0;     // total time spent in IO
+    float cpu_us = 0;    // total time spent in CPU
+    float executing_in_coro_us = 0;    // total time spent in coro
+
+    float scheduler_total_us = 0;
+    float scheduler_cpu_us = 0;
+
+    float wait_ring_lock_us = 0;
+    
+    
   };
 
   template<typename T>

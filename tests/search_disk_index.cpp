@@ -63,6 +63,7 @@ int search_disk_index(
     const _u32 search_io_limit, const std::vector<unsigned>& Lvec,
     const _u32 mem_L,
     const bool use_page_search=true,
+    const bool use_pipeline=true,
     const bool use_coro = false,
     const float use_ratio=1.0,
     const bool use_reorder_data = false,
@@ -253,7 +254,7 @@ int search_disk_index(
 
     std::vector<uint64_t> query_result_ids_64(recall_at * query_num);
     auto                  s = std::chrono::high_resolution_clock::now();
-    query_num = 10000;
+    query_num = SEARCH_QUERY;
     // _pFlashIndex->verbose_ = true;
     // Using branching outside the for loop instead of inside and 
     // std::function/std::mem_fn for less switching and function calling overhead
@@ -269,16 +270,6 @@ int search_disk_index(
         }
       }else{
         if (use_coro) {
-          std::cout << "Using coro" << std::endl;
-// #pragma omp parallel for schedule(dynamic, 1)
-//           for (_s64 i = 0; i < (int64_t) query_num; i++) {
-//             _pFlashIndex->async_search(
-//                 query + (i * query_aligned_dim), recall_at, mem_L, L,
-//                 query_result_ids_64.data() + (i * recall_at),
-//                 query_result_dists[test_id].data() + (i * recall_at),
-//                 optimized_beamwidth, search_io_limit, use_reorder_data,
-//                 use_ratio, stats + i);
-//           }
 
           _pFlashIndex->bqann_search(
               query, query_num, recall_at, mem_L, L, query_result_ids_64.data(),
@@ -299,13 +290,16 @@ int search_disk_index(
             // if (ret != 0) {
             //     std::cerr << "Error setting thread affinity!" << std::endl;
             // }
-            bool pipeline = true;
+            bool pipeline = use_pipeline;
+            // std::mutex set_thread_mtx;
+            // std::vector<bool> tmp_bool_vec(num_threads,false);
+            // bool set_already = false;
+            // int idx = 0;
             if (pipeline) {
               std::cout << "Pipeline" << std::endl;
 #pragma omp parallel for schedule(dynamic, 1)
               for (_s64 i = 0; i < (int64_t) query_num; i++) {
 
-                // TODO 绑核 只执行一次绑核的逻辑
                 // TODO 打印每个线程的执行的时间
 
                 _pFlashIndex->page_search(
@@ -378,6 +372,11 @@ int search_disk_index(
         stats, query_num,
         [](const diskann::QueryStats& stats) { return stats.cpu_us; });
 
+    auto mean_coro_us = diskann::get_mean_stats<float>(
+        stats, query_num,
+        [](const diskann::QueryStats& stats) { return stats.executing_in_coro_us; });
+        
+
     auto mean_hops = diskann::get_mean_stats<unsigned>(
         stats, query_num,
         [](const diskann::QueryStats& stats) { return stats.n_hops; });
@@ -422,12 +421,13 @@ int search_disk_index(
                 << ","<< "Beamwidth"
                 << ","<< "QPS"
                 << ","<< "Mean Latency"
-                << ","<< "P99.9 Latency"
                 << ","<< "P90 Latency"
+                << ","<< "P99.9 Latency"
                 << ","<< "IOps"
                 << ","<< "Mean IOs" 
                 << ","<< "Mean IO (us)"
                 << ","<< "CPU (us)"
+                << ","<< "Mean coro exe time (us)"
                 << ","<< "Mean hops"
                 << ","<< "Mean cache_hits"
                 << ","<< "Aff. cache n"
@@ -444,12 +444,13 @@ int search_disk_index(
                   << "," << optimized_beamwidth
                   << ","<< qps
                   << ","<< mean_latency
-                  << ","<< latency_999
                   << ","<< latency_90
+                  << ","<< latency_999
                   << ","<< iops
                   << ","<< mean_ios
                   << ","<< mean_ious
                   << ","<< mean_cpus
+                  << ","<< mean_coro_us
                   << ","<< mean_hops
                   << ","<< mean_cache_hits
                   << ","<< n_aff_cache_nodes
@@ -537,6 +538,7 @@ int main(int argc, char** argv) {
   std::vector<unsigned> Lvec;
   bool                  use_reorder_data = false;
   bool                  use_page_search = true;
+  bool                  use_pipeline = true;
   bool                  page_expansion = true;
   bool                  use_coro = false;
   float                 use_ratio = 1.0;
@@ -594,6 +596,8 @@ int main(int argc, char** argv) {
                        "The L of the in-memory navigation graph while searching. Use 0 to disable");
     desc.add_options()("use_page_search", po::value<bool>(&use_page_search)->default_value(1),
                        "Use 1 for page search (default), 0 for DiskANN beam search");
+    desc.add_options()("use_pipeline", po::value<bool>(&use_pipeline)->default_value(1),
+                       "Use 1 for pipeline (default), 0 for not pipeline");
     desc.add_options()("page_expansion", po::value<bool>(&page_expansion)->default_value(1),
                        "Use 1 for using page_expansion in search (default), 0 for node_expansion");
     desc.add_options()("use_coro", po::value<bool>(&use_coro)->default_value(0),
@@ -662,24 +666,23 @@ int main(int argc, char** argv) {
 
   try {
     if (data_type == std::string("float"))
-      return search_disk_index<float>(metric, index_path_prefix,
-                                      mem_index_path,
-                                      result_path_prefix, query_file, gt_file,
-                                      disk_file_path,
-                                      num_threads, K, W, num_nodes_to_cache,
-                                      search_io_limit, Lvec, mem_L, use_page_search, use_coro, use_ratio, use_reorder_data, use_sq);
+      return search_disk_index<float>(
+          metric, index_path_prefix, mem_index_path, result_path_prefix,
+          query_file, gt_file, disk_file_path, num_threads, K, W,
+          num_nodes_to_cache, search_io_limit, Lvec, mem_L, use_page_search,
+          use_pipeline, use_coro, use_ratio, use_reorder_data, use_sq);
     else if (data_type == std::string("int8"))
-      return search_disk_index<int8_t>(metric, index_path_prefix,
-                                       mem_index_path,
-                                       result_path_prefix, query_file, gt_file,
-                                       disk_file_path,
-                                       num_threads, K, W, num_nodes_to_cache,
-                                       search_io_limit, Lvec, mem_L, use_page_search, use_coro, use_ratio, use_reorder_data);
+      return search_disk_index<int8_t>(
+          metric, index_path_prefix, mem_index_path, result_path_prefix,
+          query_file, gt_file, disk_file_path, num_threads, K, W,
+          num_nodes_to_cache, search_io_limit, Lvec, mem_L, use_page_search,
+          use_pipeline, use_coro, use_ratio, use_reorder_data);
     else if (data_type == std::string("uint8"))
       return search_disk_index<uint8_t>(
-          metric, index_path_prefix, mem_index_path, result_path_prefix, query_file, gt_file,
-          disk_file_path, num_threads, K, W, num_nodes_to_cache, search_io_limit, Lvec, mem_L,
-          use_page_search, use_coro, use_ratio, use_reorder_data);
+          metric, index_path_prefix, mem_index_path, result_path_prefix,
+          query_file, gt_file, disk_file_path, num_threads, K, W,
+          num_nodes_to_cache, search_io_limit, Lvec, mem_L, use_page_search,
+          use_pipeline, use_coro, use_ratio, use_reorder_data);
     else {
       std::cerr << "Unsupported data type. Use float or int8 or uint8"
                 << std::endl;
