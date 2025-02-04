@@ -220,14 +220,17 @@ namespace diskann {
     for (size_t k = 0; k < nthreads; k++) {
       this->handles_map[k].resize(MAX_COROUTINE);
     }
-    auto result = io_uring_queue_init(256, &ring_, 0);
+    auto result = io_uring_queue_init(1024, &ring_, 0);
     if (result != 0) {
       std::cout << "io_uring init error!" << std::endl;
     }
 
-    this->rings_.resize(nthreads);
-    for (size_t k = 0; k < nthreads; k++) {
-      auto result = io_uring_queue_init(256, &(rings_[k]), 0);
+    size_t ring_num = MAX_IO_RING_NUM;
+    // size_t ring_num = nthreads;
+
+    this->rings_.resize(ring_num);
+    for (size_t k = 0; k < ring_num; k++) {
+      auto result = io_uring_queue_init(1024, &(rings_[k]), 0);
       if (result != 0) {
         std::cout << "io_urings init error! " << k << std::endl;
       }

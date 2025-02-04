@@ -183,9 +183,15 @@ case $2 in
               --disk_file_path ${DISK_FILE_PATH} > ${FREQ_LOG}
   ;;
   analyze_block)
-    BLOCK_PATH_BIN=${INDEX_PREFIX_PATH}result/result_block_path_L${LS}_B${BW}_T${T}.bin
-    echo "Analyze block path file... ${BLOCK_PATH_BIN}"
-    time ${EXE_PATH}/tests/utils/analyze_block_path --block_path_file $BLOCK_PATH_BIN --time_window_size $IO_WINDOW_SIZE
+    for BW in ${BM_LIST[@]}
+    do
+      for T in ${T_LIST[@]}
+      do
+        BLOCK_PATH_BIN=${INDEX_PREFIX_PATH}result/result_block_path_L${LS}_PS${USE_PAGE_SEARCH}_B${BW}_T${T}_withts.bin
+        echo "Analyze block path file... ${BLOCK_PATH_BIN}"
+        time ${EXE_PATH}/tests/utils/analyze_block_path --block_path_file $BLOCK_PATH_BIN --time_window_size $IO_WINDOW_SIZE
+      done
+    done
   ;;
   compute_gt)
     echo "Computing gt of ${QUERY_FILE} from ${BASE_PATH}"
@@ -272,6 +278,9 @@ case $2 in
 
     # choose the disk index file by settings
     DISK_FILE_PATH=${INDEX_PREFIX_PATH}_disk.index
+    if [ $USE_CORO -eq 1 ]; then
+      echo "Using Coro"
+    fi
     if [ $USE_PAGE_SEARCH -eq 1 ]; then
       if [ ! -f ${INDEX_PREFIX_PATH}_partition.bin ]; then
         echo "Partition file not found. Run the script with gp option first."
@@ -295,9 +304,28 @@ case $2 in
         do
           for T in ${T_LIST[@]}
           do
-            SEARCH_LOG=${INDEX_PREFIX_PATH}search/search_SQ${USE_SQ}_K${K}_CACHE${CACHE}_BW${BW}_T${T}_MEML${MEM_L}_MEMK${MEM_TOPK}_MEM_USE_FREQ${MEM_USE_FREQ}_PS${USE_PAGE_SEARCH}_USE_RATIO${PS_USE_RATIO}_GP_USE_FREQ{$GP_USE_FREQ}_GP_LOCK_NUMS${GP_LOCK_NUMS}_GP_CUT${GP_CUT}.log
+            SEARCH_LOG=${INDEX_PREFIX_PATH}search/search_BW${BW}_T${T}_K${K}_CACHE${CACHE}_SQ${USE_SQ}_MEML${MEM_L}_MEMK${MEM_TOPK}_MEM_USE_FREQ${MEM_USE_FREQ}_PS${USE_PAGE_SEARCH}_CORO${USE_CORO}_USE_RATIO${PS_USE_RATIO}_GP_USE_FREQ${GP_USE_FREQ}_GP_LOCK_NUMS${GP_LOCK_NUMS}_GP_CUT${GP_CUT}.log
             echo "Searching... log file: ${SEARCH_LOG}"
-            sync; echo 3 | sudo tee /proc/sys/vm/drop_caches; ${EXE_PATH}/tests/search_disk_index --data_type $DATA_TYPE \
+            # echo "${EXE_PATH}/tests/search_disk_index --data_type $DATA_TYPE \
+            #   --dist_fn $DIST_FN \
+            #   --index_path_prefix $INDEX_PREFIX_PATH \
+            #   --query_file $QUERY_FILE \
+            #   --gt_file $GT_FILE \
+            #   -K $K \
+            #   --result_path ${INDEX_PREFIX_PATH}result/result \
+            #   --num_nodes_to_cache $CACHE \
+            #   -T $T \
+            #   -L ${LS} \
+            #   -W $BW \
+            #   --mem_L ${MEM_L} \
+            #   --mem_index_path ${MEM_INDEX_PATH}_index \
+            #   --use_page_search ${USE_PAGE_SEARCH} \
+            #   --use_ratio ${PS_USE_RATIO} \
+            #   --disk_file_path ${DISK_FILE_PATH} \
+            #   --use_sq ${USE_SQ}"
+            sync; echo 3 | sudo tee /proc/sys/vm/drop_caches; 
+            # numactl --physcpubind=0-72 
+            ${EXE_PATH}/tests/search_disk_index --data_type $DATA_TYPE \
               --dist_fn $DIST_FN \
               --index_path_prefix $INDEX_PREFIX_PATH \
               --query_file $QUERY_FILE \
@@ -312,8 +340,10 @@ case $2 in
               --mem_index_path ${MEM_INDEX_PATH}_index \
               --use_page_search ${USE_PAGE_SEARCH} \
               --use_ratio ${PS_USE_RATIO} \
+              --use_pipeline ${PIPELINE} \
               --disk_file_path ${DISK_FILE_PATH} \
-              --use_sq ${USE_SQ}       > ${SEARCH_LOG} 
+              --use_sq ${USE_SQ}     \
+              --use_coro ${USE_CORO}      > ${SEARCH_LOG} 
             log_arr+=( ${SEARCH_LOG} )
           done
         done
@@ -363,7 +393,16 @@ case $2 in
         printf "\n\n" >> $SUMMARY_FILE_PATH
       done
     fi
-  ;;
+    if [ ${#log_arr[@]} -ge 1 ]; then
+      TITLES=$(cat ${log_arr[0]} | grep -E "^L,#")
+      printf "${TITLES}\n" | tee -a $SUMMARY_FILE_PATH
+      for f in "${log_arr[@]}"
+      do
+        cat $f | grep -E "([0-9]+(\.[0-9]+),){5,}" | tee -a $SUMMARY_FILE_PATH
+        printf "\n\n" >> $SUMMARY_FILE_PATH
+      done
+    fi
+    ;;
   *)
     print_usage_and_exit
   ;;

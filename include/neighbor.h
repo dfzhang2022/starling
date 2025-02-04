@@ -31,6 +31,13 @@ namespace diskann {
     inline bool operator==(const Neighbor &other) const {
       return (id == other.id);
     }
+    std::string print(){
+      std::string tmp;
+      tmp += std::to_string(id);
+      tmp += ",";
+      tmp += std::to_string(distance);
+      return tmp;
+    }
   };
 
   struct MemNavNeighbor {

@@ -11,23 +11,29 @@
 #include "io_uring.h"
 
 namespace diskann {
+  
   template<typename T>
   void IORegisterAwaiter<T>::await_suspend(cppcoro::coroutine_handle<> handle) {
 
     // TODO 增加thread id -> ring#的逻辑
       this->ext_data_.handle = handle;
+      int thread_id_local = this->ext_data_.thread_id;
+      int coro_id_local = this->ext_data_.coro_idx;
       int cnt = 0;
       diskann::Timer ring_mutex_timer;
       ring_mutex_timer.reset();
       // pq_flash_index_->ring_mutex_lock(this->ext_data_.thread_id,this->ext_data_.coro_idx);
-      pq_flash_index_->ring_mutex_lock();
+      pq_flash_index_->ring_mutex_lock(thread_id_local, coro_id_local);
       thread_stat_->wait_ring_lock_us += ring_mutex_timer.elapsed();
+      io_uring* ring_ptr = this->pq_flash_index_->get_iouring(thread_id_local, coro_id_local);
       // std::cout<<"aligned_read_vec_.size()"<<aligned_read_vec_.size()<<std::endl;
       for (size_t i = 0; i < this->aligned_read_vec_.size(); i++) {
         // std::cout << "Issue io:"<<i<< std::endl;
         AlignedRead  *tmp_ptr = &aligned_read_vec_[i];
+        // pq_flash_index_->ring_mutex_lock(thread_id_local, coro_id_local);
         io_uring_sqe *sqe =
-            io_uring_get_sqe(this->pq_flash_index_->get_iouring());
+            io_uring_get_sqe(ring_ptr);
+        // pq_flash_index_->ring_mutex_unlock(thread_id_local, coro_id_local);
         if (sqe == nullptr) {
           // throw BQANN::SubmissionQueueFullError{};
           std::cout<<"SubmissionQueueFullError"<<std::endl;
@@ -42,14 +48,10 @@ namespace diskann {
         cnt++;
         // std::cout<<"bbb"<<std::endl;
       }
-      pq_flash_index_->register_io(this->ext_data_.thread_id,this->ext_data_.coro_idx,cnt);
-      io_uring_submit(this->pq_flash_index_->get_iouring());
-      pq_flash_index_->ring_mutex_unlock();
-      
-      // std::cout << "[D]Issue io."<< std::endl;
-      // std::cout<<"ccccc"<<std::endl;
-      // ring_.num_waiting_ += cnt;
-      // std::cout<<"dddddd"<<std::endl;
+      pq_flash_index_->register_io(thread_id_local, coro_id_local,cnt);
+      // pq_flash_index_->ring_mutex_lock(thread_id_local, coro_id_local);
+      io_uring_submit(ring_ptr);
+      pq_flash_index_->ring_mutex_unlock(thread_id_local, coro_id_local);
     }
 
 
@@ -138,7 +140,7 @@ namespace diskann {
         co_return;
       }
 
-    
+
     
 
       const T     *this_coro_query = query1 + (q_id * this->query_aligned_dim);
@@ -545,7 +547,88 @@ namespace diskann {
     }  // end for
     co_return;
   }
+  template<typename T>
+  cppcoro::task<void> PQFlashIndex<T>::pure_io_query_coro(
+      const T *query, const size_t _query_num, const _u64 beam_width,
+      const _u32 io_limit, QueryStats *stats, int thread_id, int coro_id,
+      BQANN::Countdown &countdown, ThreadStats *thread_stat) {
+    QueryScratch<T> scratch = this->coro_data.pop();
+    while (scratch.sector_scratch == nullptr) {
+      this->coro_data.wait_for_push_notify();
+      scratch = this->coro_data.pop();
+    }
+    Timer thread_timer;
+    thread_timer.reset();
 
+    for (int q_id = thread_id * MAX_COROUTINE + coro_id;;
+         q_id = q_id + max_nthreads * MAX_COROUTINE) {
+      if (q_id >= SEARCH_QUERY) {
+        this->coro_data.push(scratch);
+        this->coro_data.push_notify_all();
+        if (verbose_) {
+          std::cout << "Coro Exit." << thread_id << "," << coro_id << std::endl;
+        }
+        thread_stat->executing_in_coro_us += (double) thread_timer.elapsed();
+        countdown.Decrement();
+        co_return;
+      }
+      // std::cout << q_id<<std::endl;
+
+      QueryStats *this_coro_stats = stats + q_id;
+      auto        query_scratch = &(scratch);
+      query_scratch->reset();
+
+      char *sector_scratch = query_scratch->sector_scratch;
+      _u64 &sector_scratch_idx = query_scratch->sector_idx;
+
+      Timer query_timer, io_timer, cpu_timer, coro_timer;
+      query_timer.reset();
+      coro_timer.reset();
+
+      unsigned num_ios = 0;
+
+      std::vector<AlignedRead> frontier_read_reqs;
+      frontier_read_reqs.reserve(2 * beam_width);
+
+      while (num_ios < 1000) {
+        frontier_read_reqs.clear();
+        sector_scratch_idx = 0;
+
+        for (size_t k = 0; k < beam_width; k++) {
+          int   block_id = generate_random(gp_layout_.size());
+          char *tmp_buf = sector_scratch + sector_scratch_idx * SECTOR_LEN;
+          sector_scratch_idx++;
+          frontier_read_reqs.emplace_back((block_id + 1) * SECTOR_LEN,
+                                          SECTOR_LEN, tmp_buf, block_id);
+          if (this_coro_stats != nullptr) {
+            this_coro_stats->n_4k++;
+            this_coro_stats->n_ios++;
+          }
+        }
+        io_timer.reset();
+        thread_stat->executing_in_coro_us += (double) thread_timer.elapsed();
+        if (this_coro_stats != nullptr) {
+          this_coro_stats->executing_in_coro_us +=
+              (double) coro_timer.elapsed();
+        }
+        int io_return_num = co_await diskann::IORegisterAwaiter<T>(
+            (PQFlashIndex<T> *) (this), frontier_read_reqs, thread_id, coro_id,
+            thread_stat);
+        num_ios += beam_width;
+
+        coro_timer.reset();
+        thread_timer.reset();
+      }
+      if (this_coro_stats != nullptr) {
+        this_coro_stats->total_us = (double) query_timer.elapsed();
+        this_coro_stats->executing_in_coro_us +=
+              (double) coro_timer.elapsed();
+      }
+      
+      thread_stat->executing_in_coro_us += (double) coro_timer.elapsed();
+    }
+    co_return;
+  }
 
   template<typename T>
   cppcoro::task<void> PQFlashIndex<T>::schduler_coro(int thread_id,BQANN::Countdown &countdown, ThreadStats* thread_stat)
@@ -554,6 +637,13 @@ namespace diskann {
     all_timer.reset();
     cpu_timer.reset();
     while(true){
+      if(countdown.IsZero()){
+        if(verbose_)
+        std::cout<<"schduler_coro exit. thread:"<<thread_id<<std::endl;
+        thread_stat->scheduler_cpu_us+=cpu_timer.elapsed();
+        thread_stat->scheduler_total_us+=all_timer.elapsed();
+        co_return;
+      }
       // coro_io_queue_mutex.lock();
       // for (unsigned i = 0; i < MAX_COROUTINE; i++) {
       //   int idx = CORO_FINAL_NO(thread_id,i);
@@ -577,14 +667,7 @@ namespace diskann {
 
       all_timer.reset();
       cpu_timer.reset();
-      // coro_io_queue_mutex.unlock();
-      if(countdown.IsZero()){
-        if(verbose_)
-        std::cout<<"schduler_coro exit. thread:"<<thread_id<<std::endl;
-        thread_stat->scheduler_cpu_us+=cpu_timer.elapsed();
-        thread_stat->scheduler_total_us+=all_timer.elapsed();
-        co_return;
-      }
+      
       // std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     co_return;  
@@ -1076,6 +1159,72 @@ namespace diskann {
     }
   }
   template<typename T>
+  void PQFlashIndex<T>::pure_io_search(
+    const T *query, const size_t query_num,const _u64 beam_width,
+    const _u32  io_limit, QueryStats *stats){
+      // TODO 设置各个线程的初始内存分配
+
+    auto thread_stats = new diskann::ThreadStats[this->max_nthreads+MAX_IO_RING_NUM];
+    std::cout<<"Pure IO"<<std::endl;
+    // std::unique_lock<std::mutex> lk(mtx);
+    this->executing_thread_num = this->max_nthreads;
+    // lk.unlock();
+    std::vector<std::thread> all_threads;
+    size_t n_io_thread_num = 1;
+
+    // add worker
+    for (_u64 i = 0; i < this->max_nthreads; i++) {
+      std::string thread_name = "WORKER" + std::to_string(i);
+      if (verbose_)
+        std::cout << thread_name << std::endl;
+      std::thread t(&PQFlashIndex<T>::pure_io_worker_thread, this, query, query_num,
+                    beam_width,
+                    io_limit, stats, i,
+                    thread_stats + i);
+
+      pthread_t pthread_handle =
+          *reinterpret_cast<pthread_t *>(t.native_handle());
+
+      pthread_setname_np(pthread_handle, thread_name.c_str());
+      all_threads.push_back(std::move(t));
+    }
+    // aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    // add io
+    for (_u64 i = this->max_nthreads ; i < this->max_nthreads + n_io_thread_num; i++) {
+      std::string thread_name = "IO" + std::to_string(i);
+      if (verbose_)
+        std::cout << thread_name << std::endl;
+      std::thread t(&PQFlashIndex<T>::io_thread, this,i,thread_stats + i);
+
+      pthread_t pthread_handle =
+          *reinterpret_cast<pthread_t *>(t.native_handle());
+
+      pthread_setname_np(pthread_handle, thread_name.c_str());
+      all_threads.push_back(std::move(t));
+    }
+    for (auto& t : all_threads) {
+        t.join();
+    }
+    for (_u64 i = 0; i < this->max_nthreads; i++) {
+      ThreadStats *thread_stat = thread_stats + i;
+    std::cout<<  "[WORKER Thread #" << i << "] ";
+    std::cout <<"in coro:"<< (thread_stat->executing_in_coro_us) / thread_stat->total_us
+              << ", wait lock: " << thread_stat->wait_ring_lock_us / thread_stat->total_us
+              << ", sche_cpu: " << thread_stat->scheduler_cpu_us / thread_stat->total_us
+              << ", sche_all: " << thread_stat->scheduler_total_us / thread_stat->total_us
+              << std::endl;
+    }
+    for (_u64 i = this->max_nthreads; i < this->max_nthreads + n_io_thread_num;
+         i++) {
+      ThreadStats *tmp = thread_stats + i;
+      std::cout << "[IO Thread #" << i << "] "
+                << ", cpu time:" << tmp->cpu_us / tmp->total_us
+                << ", io time:" << tmp->io_us / tmp->total_us
+                << ", total time:" << tmp->total_us << std::endl;
+    }
+  }
+
+  template<typename T>
   void PQFlashIndex<T>::bqann_search(const T *query, const size_t query_num,
                                      const _u64 k_search, const _u32 mem_L,
                                      const _u64 l_search, _u64 *indices,
@@ -1086,12 +1235,13 @@ namespace diskann {
 
     // TODO 设置各个线程的初始内存分配
 
-    auto thread_stats = new diskann::ThreadStats[this->max_nthreads+1];
+    auto thread_stats = new diskann::ThreadStats[this->max_nthreads+MAX_IO_RING_NUM];
 
     // std::unique_lock<std::mutex> lk(mtx);
     this->executing_thread_num = this->max_nthreads;
     // lk.unlock();
     std::vector<std::thread> all_threads;
+    size_t n_io_thread_num = 1;
 
     // add worker
     for (_u64 i = 0; i < this->max_nthreads; i++) {
@@ -1111,7 +1261,7 @@ namespace diskann {
     }
 
     // add io
-    for (_u64 i = this->max_nthreads ; i < this->max_nthreads + 1; i++) {
+    for (_u64 i = this->max_nthreads ; i < this->max_nthreads + n_io_thread_num; i++) {
       std::string thread_name = "IO" + std::to_string(i);
       if (verbose_)
         std::cout << thread_name << std::endl;
@@ -1126,6 +1276,22 @@ namespace diskann {
     for (auto& t : all_threads) {
         t.join();
     }
+    for (_u64 i = 0; i < this->max_nthreads; i++) {
+      ThreadStats *thread_stat = thread_stats + i;
+    std::cout<<  "[WORKER Thread #" << i << "] ";
+    std::cout <<"in coro:"<< (thread_stat->executing_in_coro_us) / thread_stat->total_us
+              << "," << thread_stat->scheduler_cpu_us / thread_stat->total_us
+              << "," << thread_stat->scheduler_total_us / thread_stat->total_us
+              << "," << thread_stat->wait_ring_lock_us / thread_stat->total_us
+              << std::endl;
+    }
+    for (_u64 i = this->max_nthreads; i < this->max_nthreads + n_io_thread_num;
+         i++) {
+      ThreadStats *tmp = thread_stats + i;
+      std::cout << "[IO Thread #" << i << "] " << tmp->cpu_us / tmp->total_us
+                << ", cpu time:" << tmp->cpu_us
+                << ", total time:" << tmp->total_us << std::endl;
+    }
   }
 
   template<typename T>
@@ -1134,8 +1300,6 @@ namespace diskann {
       const _u32 mem_L, const _u64 l_search, _u64 *indices, float *distances,
       const _u64 beam_width, const _u32 io_limit, const bool use_reorder_data,
       const float use_ratio, QueryStats *stats, int thread_id, ThreadStats* thread_stat) {
-    
-
     // 绑定线程核心
     cpu_set_t mask;
     CPU_ZERO(&mask);
@@ -1146,8 +1310,8 @@ namespace diskann {
 
     Timer all_timer, io_timer, cpu_timer;
     all_timer.reset();
-    if(verbose_)
-    std::cout << "[Worker Thread]Enter thread."<< std::endl;
+    if (verbose_)
+      std::cout << "[Worker Thread]Enter thread." << std::endl;
     size_t coro_size = MAX_COROUTINE;
 
     BQANN::Countdown countdown(coro_size);
@@ -1168,84 +1332,132 @@ namespace diskann {
     lk.unlock();
     thread_stat->total_us+=all_timer.elapsed();
 
-    std::cout<< "[Worker Thread]"<<thread_id<<std::endl;
-    std::cout << (thread_stat->executing_in_coro_us) / thread_stat->total_us
-              << "," << thread_stat->scheduler_cpu_us / thread_stat->total_us
-              << "," << thread_stat->scheduler_total_us / thread_stat->total_us
-              << "," << thread_stat->wait_ring_lock_us / thread_stat->total_us
-              << std::endl;
     // if(verbose_)
     std::cout << "[Worker Thread]Exit."<<thread_id<< std::endl;
     return;
   }
-  template<typename T>
-  void PQFlashIndex<T>::io_thread(int thread_id,ThreadStats* thread_stat) {
-    // 绑定线程核心 到最大工作线程数加1的位置
-    // std::this_thread::sleep_for(std::chrono::milliseconds(10));
+template<typename T>
+  void PQFlashIndex<T>::pure_io_worker_thread(
+      const T *query, const size_t query_num,
+      const _u64 beam_width, const _u32 io_limit, QueryStats *stats, int thread_id, ThreadStats* thread_stat) {
+    // 绑定线程核心
     cpu_set_t mask;
     CPU_ZERO(&mask);
     CPU_SET(thread_id, &mask);
     if (sched_setaffinity(0, sizeof(mask), &mask) == -1) {
       std::cout << "Could not set CPU affinity" << std::endl;
     }
-    Timer all_timer;
+
+    Timer all_timer, io_timer, cpu_timer;
     all_timer.reset();
-    if(verbose_)
-    std::cout << "[IO Thread]Enter thread."<< std::endl;
-    constexpr size_t kBatchSize = 128;
+    if (verbose_)
+      std::cout << "[Worker Thread]Enter thread." << std::endl;
+    size_t coro_size = MAX_COROUTINE;
+
+    BQANN::Countdown countdown(coro_size);
+
+    std::vector<cppcoro::task<void>> tasks;
+    tasks.reserve(coro_size + 1);
+    for (size_t k = 0; k < coro_size; k++) {
+      // std::cout << "query_coro[" <<k<<"]"<< std::endl;
+      tasks.emplace_back(
+           pure_io_query_coro(query,query_num,beam_width,io_limit,stats,thread_id,k, countdown,thread_stat));
+    }
+    tasks.emplace_back(schduler_coro(thread_id,countdown,thread_stat));
+    cppcoro::sync_wait(cppcoro::when_all_ready(std::move(tasks)));
+
+
+    std::unique_lock<std::mutex> lk(mtx);
+    this->executing_thread_num--;
+    lk.unlock();
+    thread_stat->total_us+=all_timer.elapsed();
+
+    // if(verbose_)
+    std::cout << "[Worker Thread]Exit."<<thread_id<< std::endl;
+    return;
+  }
+
+
+  template<typename T>
+  void PQFlashIndex<T>::io_thread(int io_thread_id,ThreadStats* thread_stat) {
+    // 绑定线程核心 到最大工作线程数加1的位置
+    // std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    CPU_SET(io_thread_id, &mask);
+    if (sched_setaffinity(0, sizeof(mask), &mask) == -1) {
+      std::cout << "Could not set CPU affinity" << std::endl;
+    }
+    Timer all_timer, cpu_timer, io_timer;
+    all_timer.reset();
+    cpu_timer.reset();
+    io_timer.reset();
+    if (verbose_)
+      std::cout << "[IO Thread]Enter thread." << std::endl;
+    constexpr size_t kBatchSize = 512;
+    int ring_id = io_thread_id-max_nthreads;
     while(true){
         _u64 executing_thread_num_now;
         // std::unique_lock<std::mutex> lk(mtx);
         executing_thread_num_now = this->executing_thread_num;
         // lk.unlock();
         if( (executing_thread_num_now == 0)){
-          return;
+          break;
         }
 
-        // TODO 处理所有IO的逻辑
-        std::array<io_uring_cqe *, kBatchSize>              cqes;
+        // TODO 单个query轮询所有的ring
+        for(size_t ring_idx = 0; ring_idx<MAX_IO_RING_NUM;ring_idx++){
+          std::array<io_uring_cqe *, kBatchSize>              cqes;
 
-        // std::cout << "[IO Thread]wait for io."<<std::endl;
-        // collect up to kBatchSize handles
-        // this->ring_mutex_lock();
-        unsigned num_returned =
-            io_uring_peek_batch_cqe(this->get_iouring(), cqes.data(), kBatchSize);
-        // std::cout << "[IO Thread]Get io#:"<<num_returned<<std::endl;
-        if(num_returned== kBatchSize){
-          std::cout << "[IO Thread] IO full power."<< std::endl;
-        }
-        for (unsigned i = 0; i < num_returned; i++) {
-          auto *coro_io_issue_data_tmp =
-              reinterpret_cast<CoroIOIssueData *>(io_uring_cqe_get_data(cqes[i]));
-          // awaiter->SetResult(cqes[i]->res);
-          io_uring_cqe_seen(this->get_iouring(), cqes[i]);
-          if(cqes[i]->res != 4096){
-            std::cout<<"sdsdsd"<<std::endl;
+          // std::cout << "[IO Thread]wait for io."<<std::endl;
+          // collect up to kBatchSize handles
+          // this->ring_mutex_lock();
+          // unsigned num_returned =
+          //     io_uring_peek_batch_cqe(this->get_iouring(ring_id,0), cqes.data(), kBatchSize);
+          io_timer.reset();
+          unsigned num_returned =
+              io_uring_peek_batch_cqe(this->get_iouring(ring_idx,0), cqes.data(), kBatchSize);
+          thread_stat->io_us += io_timer.elapsed();
+          // std::cout << "[IO Thread]Get io#:"<<num_returned<<std::endl;
+          if(num_returned== kBatchSize){
+            std::cout << "[IO Thread] IO full power."<< std::endl;
           }
-          int thread_id = coro_io_issue_data_tmp->thread_id;
-          int coro_id = coro_io_issue_data_tmp->coro_idx;
-          int idx = CORO_FINAL_NO(thread_id,coro_id);
-          // std::cout << "[IO Thread]Thread id:"<<thread_id<<", coro id:"<<coro_id<< std::endl;
-          handles_map[thread_id][coro_id] = coro_io_issue_data_tmp->handle;
-          // coro_io_queue_mutex.lock();
-          this->n_io_completed[thread_id][coro_id]++;
-          // if(this->io_state[thread_id][coro_id] == IORequestState::WaitingForIO&&this->n_io_completed[thread_id][coro_id] == this->n_io_executing[thread_id][coro_id]){
-          if(this->n_io_completed[thread_id][coro_id] == this->n_io_executing[thread_id][coro_id]){
-            this->n_io_executing[thread_id][coro_id] = 0;
-            this->n_io_completed[thread_id][coro_id] = 0;
-            // this->io_state[thread_id][coro_id] = IORequestState::IOCompleted;
-            thread_complete_io_queue[thread_id]->push(coro_id);
+          cpu_timer.reset();
+          for (unsigned i = 0; i < num_returned; i++) {
+            auto *coro_io_issue_data_tmp =
+                reinterpret_cast<CoroIOIssueData *>(io_uring_cqe_get_data(cqes[i]));
+            // awaiter->SetResult(cqes[i]->res);
+            io_uring_cqe_seen(this->get_iouring(ring_idx,0), cqes[i]);
+            if(cqes[i]->res != 4096){
+              std::cout<<"Return num is not 4096."<<std::endl;
+            }
+            int thread_id = coro_io_issue_data_tmp->thread_id;
+            int coro_id = coro_io_issue_data_tmp->coro_idx;
+            // int idx = CORO_FINAL_NO(thread_id,coro_id);
+            // std::cout << "[IO Thread]Thread id:"<<thread_id<<", coro id:"<<coro_id<< std::endl;
+            handles_map[thread_id][coro_id] = coro_io_issue_data_tmp->handle;
+            // coro_io_queue_mutex.lock();
+            this->n_io_completed[thread_id][coro_id]++;
+            // if(this->io_state[thread_id][coro_id] == IORequestState::WaitingForIO&&this->n_io_completed[thread_id][coro_id] == this->n_io_executing[thread_id][coro_id]){
+            if(this->n_io_completed[thread_id][coro_id] == this->n_io_executing[thread_id][coro_id]){
+              this->n_io_executing[thread_id][coro_id] = 0;
+              this->n_io_completed[thread_id][coro_id] = 0;
+              // this->io_state[thread_id][coro_id] = IORequestState::IOCompleted;
+              thread_complete_io_queue[thread_id]->push(coro_id);
+            }
+            // coro_io_queue_mutex.unlock();
+            // std::cout << "[IO Thread]Execute completed."<<this->n_io_completed[CORO_FINAL_NO(thread_id,coro_id)]<<","<<this->n_io_executing[CORO_FINAL_NO(thread_id,coro_id)]<< std::endl;
           }
-          // coro_io_queue_mutex.unlock();
-          // std::cout << "[IO Thread]Execute completed."<<this->n_io_completed[CORO_FINAL_NO(thread_id,coro_id)]<<","<<this->n_io_executing[CORO_FINAL_NO(thread_id,coro_id)]<< std::endl;
+          thread_stat->cpu_us += cpu_timer.elapsed();
+          // this->ring_mutex_unlock();
+          // std::this_thread::sleep_for(std::chrono::milliseconds(1));
+          // std::this_thread::sleep_for(std::chrono::nanoseconds(100));
         }
-        // this->ring_mutex_unlock();
-        // std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        // std::this_thread::sleep_for(std::chrono::nanoseconds(100));
+        
     }
+    thread_stat->total_us += all_timer.elapsed();
     if(verbose_)
     std::cout << "[IO Thread]Exit."<< std::endl;
-    thread_stat->total_us += all_timer.elapsed();
     return;
   }
   

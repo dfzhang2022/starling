@@ -39,8 +39,9 @@
 // config for bqann
 #define MAX_WORKER_THREAD 64
 #define SEARCH_QUERY 10000
-#define MAX_COROUTINE 8
-#define MAX_IO_RING_NUM 16
+#define MAX_COROUTINE 32
+// max used in io part, it's enough
+#define MAX_IO_RING_NUM 64
 
 // coro #th in all coros of all threads
 #define CORO_FINAL_NO(thread_id,coro_id) (thread_id * MAX_COROUTINE + coro_id)
@@ -155,13 +156,15 @@ namespace diskann {
 
     io_uring* get_iouring(){return &ring_;}
     io_uring* get_iouring(int thread_id, int coro_id){
-      return &rings_[TO_RING_ID(thread_id,coro_id)];
+      return &(rings_[TO_RING_ID(thread_id,coro_id)]);
     }
     void ring_mutex_lock(){ring_mutex_.lock();}
     void ring_mutex_unlock(){ring_mutex_.unlock();}
 
     void ring_mutex_lock(int thread_id, int coro_id){rings_mutex_[TO_RING_ID(thread_id,coro_id)].lock();}
     void ring_mutex_unlock(int thread_id, int coro_id){rings_mutex_[TO_RING_ID(thread_id,coro_id)].unlock();}
+    void set_ncoroutines(int ncoros){this->max_ncoroutines = ncoros;}
+
     int get_index_fd(){return index_fd_;}
 
     void register_io(int thread_id, int coro_id, int cnt) {
@@ -257,6 +260,10 @@ namespace diskann {
                                         const bool  use_reorder_data = false,
                                         const float use_ratio = 1.0f,
                                         QueryStats *stats = nullptr);
+    DISKANN_DLLEXPORT void pure_io_search(const T *query, const size_t _query_num,
+                                        const _u64 beam_width,
+                                        const _u32  io_limit,
+                                        QueryStats *stats = nullptr);
 
     void worker_thread(const T *query, const size_t _query_num,
                        const _u64 k_search, const _u32 mem_L,
@@ -265,7 +272,10 @@ namespace diskann {
                        const bool  use_reorder_data = false,
                        const float use_ratio = 1.0f,
                        QueryStats *stats = nullptr, int thread_id = -1, ThreadStats* thread_stat = nullptr);
-    void io_thread(int thread_id, ThreadStats *thread_stat = nullptr);
+    void pure_io_worker_thread(const T *query, const size_t _query_num,
+                       const _u64 beam_width, const _u32 io_limit,
+                       QueryStats *stats = nullptr, int thread_id = -1, ThreadStats* thread_stat = nullptr);
+    void io_thread(int io_thread_id, ThreadStats *thread_stat = nullptr);
 
     cppcoro::task<void> query_coro(const T *query, const size_t _query_num,
                        const _u64 k_search, const _u32 mem_L,
@@ -273,6 +283,9 @@ namespace diskann {
                        const _u64 beam_width, const _u32 io_limit,
                        const bool  use_reorder_data = false,
                        const float use_ratio = 1.0f,
+                       QueryStats *stats = nullptr, int thread_id = -1, int coro_id = -1, BQANN::Countdown& countdown = BQANN::Countdown(0), ThreadStats* thread_stat = nullptr);
+    cppcoro::task<void> pure_io_query_coro(const T *query, const size_t _query_num,
+                       const _u64 beam_width, const _u32 io_limit,
                        QueryStats *stats = nullptr, int thread_id = -1, int coro_id = -1, BQANN::Countdown& countdown = BQANN::Countdown(0), ThreadStats* thread_stat = nullptr);
     cppcoro::task<void> schduler_coro(int thread_id = -1,BQANN::Countdown& countdown = BQANN::Countdown(0), ThreadStats* thread_stat = nullptr);
 
@@ -398,6 +411,7 @@ namespace diskann {
     _u64                           max_nthreads;
     // coroutine-specific scratch
     ConcurrentQueue<QueryScratch<T>> coro_data;
+    _u64                             max_ncoroutines;
     bool                             load_flag = false;
     bool                             count_visited_nodes = false;
     bool                             count_visited_nbrs = false;

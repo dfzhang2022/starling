@@ -133,6 +133,8 @@ int search_disk_index(
     _pFlashIndex->load_mem_index(metric, query_dim, mem_index_path, num_threads, mem_L);
   }
 
+  _pFlashIndex->set_ncoroutines(MAX_COROUTINE);
+
   // cache bfs levels
   std::vector<uint32_t> node_list;
   diskann::cout << "Caching " << num_nodes_to_cache
@@ -271,25 +273,14 @@ int search_disk_index(
       }else{
         if (use_coro) {
 
-          _pFlashIndex->bqann_search(
-              query, query_num, recall_at, mem_L, L, query_result_ids_64.data(),
-              query_result_dists[test_id].data(), optimized_beamwidth,
-              search_io_limit, use_reorder_data, use_ratio, stats);
+          // _pFlashIndex->bqann_search(
+          //     query, query_num, recall_at, mem_L, L, query_result_ids_64.data(),
+          //     query_result_dists[test_id].data(), optimized_beamwidth,
+          //     search_io_limit, use_reorder_data, use_ratio, stats);
+          _pFlashIndex->pure_io_search(query, query_num,optimized_beamwidth,
+              search_io_limit, stats);
           } else {
-            // // 获取当前线程的 ID
-            // int thread_id = omp_get_thread_num();
-
-            // // 设置线程亲和性，绑定到特定的核心
-            // // 假设每个线程绑定到 CPU 核心 0, 1, 2, ..., n-1
-            // cpu_set_t cpuset;
-            // CPU_ZERO(&cpuset);
-            // CPU_SET(thread_id%num_threads, &cpuset);
-
-            // // 设置当前线程的 CPU 亲和性
-            // int ret = sched_setaffinity(0, sizeof(cpu_set_t), &cpuset);
-            // if (ret != 0) {
-            //     std::cerr << "Error setting thread affinity!" << std::endl;
-            // }
+            
             bool pipeline = use_pipeline;
             // std::mutex set_thread_mtx;
             // std::vector<bool> tmp_bool_vec(num_threads,false);
@@ -371,6 +362,9 @@ int search_disk_index(
     auto mean_cpus = diskann::get_mean_stats<float>(
         stats, query_num,
         [](const diskann::QueryStats& stats) { return stats.cpu_us; });
+    auto mean_bubble_time_us = diskann::get_mean_stats<float>(
+        stats, query_num,
+        [](const diskann::QueryStats& stats) { return stats.bubble_time_us; });
 
     auto mean_coro_us = diskann::get_mean_stats<float>(
         stats, query_num,
@@ -461,6 +455,8 @@ int search_disk_index(
       diskann::cout << "," << recall << std::endl;
     } else
       diskann::cout << std::endl;
+
+    diskann::cout <<"Bubble time proportion is:"<< mean_bubble_time_us / mean_latency << std::endl;
 
     {
       // save block path

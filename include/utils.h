@@ -100,6 +100,16 @@ inline bool file_exists(const std::string& name, bool dirCheck = false) {
   }
 }
 
+inline int generate_random(int p_num) {
+    // 使用默认随机引擎
+    std::random_device rd;
+    std::mt19937 gen(rd());  // 使用梅森旋转算法生成随机数
+    std::uniform_int_distribution<> dis(0, p_num);  // 设置均匀分布范围
+
+    // 返回生成的随机数
+    return dis(gen);
+}
+
 typedef uint64_t _u64;
 typedef int64_t  _s64;
 typedef uint32_t _u32;
