@@ -20,8 +20,9 @@ namespace diskann {
       int thread_id_local = this->ext_data_.thread_id;
       int coro_id_local = this->ext_data_.coro_idx;
       int cnt = 0;
-      diskann::Timer ring_mutex_timer;
+      diskann::Timer ring_mutex_timer, awaiter_timer;
       ring_mutex_timer.reset();
+      awaiter_timer.reset();
       // pq_flash_index_->ring_mutex_lock(this->ext_data_.thread_id,this->ext_data_.coro_idx);
       pq_flash_index_->ring_mutex_lock(thread_id_local, coro_id_local);
       thread_stat_->wait_ring_lock_us += ring_mutex_timer.elapsed();
@@ -52,6 +53,7 @@ namespace diskann {
       // pq_flash_index_->ring_mutex_lock(thread_id_local, coro_id_local);
       io_uring_submit(ring_ptr);
       pq_flash_index_->ring_mutex_unlock(thread_id_local, coro_id_local);
+      thread_stat_->awaiter_time_us += awaiter_timer.elapsed();
     }
 
 
@@ -614,6 +616,7 @@ namespace diskann {
         int io_return_num = co_await diskann::IORegisterAwaiter<T>(
             (PQFlashIndex<T> *) (this), frontier_read_reqs, thread_id, coro_id,
             thread_stat);
+            io_return_num++;
         num_ios += beam_width;
 
         coro_timer.reset();
@@ -1276,20 +1279,22 @@ namespace diskann {
     for (auto& t : all_threads) {
         t.join();
     }
-    for (_u64 i = 0; i < this->max_nthreads; i++) {
+     for (_u64 i = 0; i < this->max_nthreads; i++) {
       ThreadStats *thread_stat = thread_stats + i;
     std::cout<<  "[WORKER Thread #" << i << "] ";
     std::cout <<"in coro:"<< (thread_stat->executing_in_coro_us) / thread_stat->total_us
-              << "," << thread_stat->scheduler_cpu_us / thread_stat->total_us
-              << "," << thread_stat->scheduler_total_us / thread_stat->total_us
-              << "," << thread_stat->wait_ring_lock_us / thread_stat->total_us
+              <<"in awaiter :"<< thread_stat->awaiter_time_us / thread_stat->total_us
+              << ", wait lock: " << thread_stat->wait_ring_lock_us / thread_stat->total_us
+              << ", sche_cpu: " << thread_stat->scheduler_cpu_us / thread_stat->total_us
+              << ", sche_all: " << thread_stat->scheduler_total_us / thread_stat->total_us
               << std::endl;
     }
     for (_u64 i = this->max_nthreads; i < this->max_nthreads + n_io_thread_num;
          i++) {
       ThreadStats *tmp = thread_stats + i;
-      std::cout << "[IO Thread #" << i << "] " << tmp->cpu_us / tmp->total_us
-                << ", cpu time:" << tmp->cpu_us
+      std::cout << "[IO Thread #" << i << "] "
+                << ", cpu time:" << tmp->cpu_us / tmp->total_us
+                << ", io time:" << tmp->io_us / tmp->total_us
                 << ", total time:" << tmp->total_us << std::endl;
     }
   }

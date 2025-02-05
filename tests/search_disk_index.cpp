@@ -273,45 +273,49 @@ int search_disk_index(
       }else{
         if (use_coro) {
 
-          // _pFlashIndex->bqann_search(
-          //     query, query_num, recall_at, mem_L, L, query_result_ids_64.data(),
-          //     query_result_dists[test_id].data(), optimized_beamwidth,
-          //     search_io_limit, use_reorder_data, use_ratio, stats);
-          _pFlashIndex->pure_io_search(query, query_num,optimized_beamwidth,
-              search_io_limit, stats);
+          _pFlashIndex->bqann_search(
+              query, query_num, recall_at, mem_L, L, query_result_ids_64.data(),
+              query_result_dists[test_id].data(), optimized_beamwidth,
+              search_io_limit, use_reorder_data, use_ratio, stats);
+          // _pFlashIndex->pure_io_search(query, query_num,optimized_beamwidth,
+          //     search_io_limit, stats);
           } else {
             
             bool pipeline = use_pipeline;
+
+            _pFlashIndex->starling_search(query, query_num, recall_at, mem_L, L, query_result_ids_64.data(),
+              query_result_dists[test_id].data(), optimized_beamwidth,
+              search_io_limit, use_reorder_data, use_ratio, pipeline, stats);
             // std::mutex set_thread_mtx;
             // std::vector<bool> tmp_bool_vec(num_threads,false);
             // bool set_already = false;
             // int idx = 0;
-            if (pipeline) {
-              std::cout << "Pipeline" << std::endl;
-#pragma omp parallel for schedule(dynamic, 1)
-              for (_s64 i = 0; i < (int64_t) query_num; i++) {
+//             if (pipeline) {
+//               std::cout << "Pipeline" << std::endl;
+// #pragma omp parallel for schedule(dynamic, 1)
+//               for (_s64 i = 0; i < (int64_t) query_num; i++) {
 
-                // TODO 打印每个线程的执行的时间
+//                 // TODO 打印每个线程的执行的时间
 
-                _pFlashIndex->page_search(
-                    query + (i * query_aligned_dim), recall_at, mem_L, L,
-                    query_result_ids_64.data() + (i * recall_at),
-                    query_result_dists[test_id].data() + (i * recall_at),
-                    optimized_beamwidth, search_io_limit, use_reorder_data,
-                    use_ratio, stats + i);
-              }
-              } else {
-              std::cout << "No pipeline" << std::endl;
-#pragma omp parallel for schedule(dynamic, 1)
-              for (_s64 i = 0; i < (int64_t) query_num; i++) {
-                _pFlashIndex->page_search_no_pipeline(
-                    query + (i * query_aligned_dim), recall_at, mem_L, L,
-                    query_result_ids_64.data() + (i * recall_at),
-                    query_result_dists[test_id].data() + (i * recall_at),
-                    optimized_beamwidth, search_io_limit, use_reorder_data,
-                    use_ratio, stats + i);
-              }
-              }
+//                 _pFlashIndex->page_search(
+//                     query + (i * query_aligned_dim), recall_at, mem_L, L,
+//                     query_result_ids_64.data() + (i * recall_at),
+//                     query_result_dists[test_id].data() + (i * recall_at),
+//                     optimized_beamwidth, search_io_limit, use_reorder_data,
+//                     use_ratio, stats + i);
+//               }
+//               } else {
+//               std::cout << "No pipeline" << std::endl;
+// #pragma omp parallel for schedule(dynamic, 1)
+//               for (_s64 i = 0; i < (int64_t) query_num; i++) {
+//                 _pFlashIndex->page_search_no_pipeline(
+//                     query + (i * query_aligned_dim), recall_at, mem_L, L,
+//                     query_result_ids_64.data() + (i * recall_at),
+//                     query_result_dists[test_id].data() + (i * recall_at),
+//                     optimized_beamwidth, search_io_limit, use_reorder_data,
+//                     use_ratio, stats + i);
+//               }
+//               }
             }
       }
     } else {

@@ -39,7 +39,7 @@
 // config for bqann
 #define MAX_WORKER_THREAD 64
 #define SEARCH_QUERY 10000
-#define MAX_COROUTINE 32
+#define MAX_COROUTINE 16
 // max used in io part, it's enough
 #define MAX_IO_RING_NUM 64
 
@@ -232,6 +232,15 @@ namespace diskann {
         const T *query, const _u64 k_search, const _u32 mem_L, const _u64 l_search, _u64 *res_ids,
         float *res_dists, const _u64 beam_width, const _u32 io_limit,
         const bool use_reorder_data = false, const float use_ratio = 1.0f, QueryStats *stats = nullptr);
+    DISKANN_DLLEXPORT void starling_search(const T *query, const size_t _query_num,
+                                        const _u64 k_search, const _u32 mem_L,
+                                        const _u64 l_search, _u64 *res_ids,
+                                        float *res_dists, const _u64 beam_width,
+                                        const _u32  io_limit,
+                                        const bool  use_reorder_data = false,
+                                        const float use_ratio = 1.0f,
+                                        const bool use_pipeline = true,
+                                        QueryStats *stats = nullptr);
     DISKANN_DLLEXPORT void page_search_no_pipeline(
         const T *query, const _u64 k_search, const _u32 mem_L, const _u64 l_search, _u64 *res_ids,
         float *res_dists, const _u64 beam_width, const _u32 io_limit,
@@ -250,7 +259,8 @@ namespace diskann {
                     const _u64 beam_width, const _u32 io_limit,
                     const bool  use_reorder_data = false,
                     const float use_ratio = 1.0f,
-                    QueryStats *stats = nullptr, int thread_id = -1);
+                    const bool use_pipeline = true,
+                    QueryStats *stats = nullptr, int thread_id = -1, ThreadStats *thread_stat = nullptr);
 
     DISKANN_DLLEXPORT void bqann_search(const T *query, const size_t _query_num,
                                         const _u64 k_search, const _u32 mem_L,
@@ -260,6 +270,7 @@ namespace diskann {
                                         const bool  use_reorder_data = false,
                                         const float use_ratio = 1.0f,
                                         QueryStats *stats = nullptr);
+
     DISKANN_DLLEXPORT void pure_io_search(const T *query, const size_t _query_num,
                                         const _u64 beam_width,
                                         const _u32  io_limit,

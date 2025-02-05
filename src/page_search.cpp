@@ -36,6 +36,92 @@ namespace diskann {
   }
 
   template<typename T>
+  void PQFlashIndex<T>::page_search_worker_thread(
+      const T *query, const size_t query_num, const _u64 k_search,
+      const _u32 mem_L, const _u64 l_search, _u64 *indices, float *distances,
+      const _u64 beam_width, const _u32 io_limit, const bool use_reorder_data,
+      const float use_ratio, const bool use_pipeline, QueryStats *stats,
+      int thread_id, ThreadStats *thread_stat) {
+    // 绑定线程核心
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    CPU_SET(thread_id, &mask);
+    if (sched_setaffinity(0, sizeof(mask), &mask) == -1) {
+      std::cout << "Could not set CPU affinity" << std::endl;
+    }
+
+    Timer all_timer;
+    all_timer.reset();
+    for (size_t q_id = thread_id;; q_id = q_id + max_nthreads) {
+      if (q_id >= query_num) {
+        return;
+      }
+
+      if (use_pipeline) {
+        // TODO 打印每个线程的执行的时间
+
+        page_search(query + (q_id * query_aligned_dim), k_search, mem_L, l_search,
+                    indices + (q_id * k_search),
+                    distances + (q_id * k_search),
+                    beam_width, io_limit, use_reorder_data,
+                    use_ratio, stats + q_id);
+      } else {
+        page_search_no_pipeline(query + (q_id * query_aligned_dim), k_search, mem_L, l_search,
+                    indices +(q_id * k_search),
+                    distances + (q_id * k_search),
+                    beam_width, io_limit, use_reorder_data,
+                    use_ratio, stats + q_id);
+      }
+      thread_stat->cpu_us += (stats + q_id)->cpu_us;
+    }
+    thread_stat->total_us += all_timer.elapsed();
+  }
+  template<typename T>
+  void PQFlashIndex<T>::starling_search(const T *query, const size_t query_num,
+                                     const _u64 k_search, const _u32 mem_L,
+                                     const _u64 l_search, _u64 *indices,
+                                     float *distances, const _u64 beam_width,
+                                     const _u32  io_limit,
+                                     const bool  use_reorder_data,
+                                     const float use_ratio,const bool use_pipeline, QueryStats *stats){
+
+      auto thread_stats = new diskann::ThreadStats[this->max_nthreads];
+
+      if (use_pipeline) {
+        std::cout << "Pipeline" << std::endl;
+      }else{
+        std::cout << "No Pipeline" << std::endl;
+      }
+
+      std::vector<std::thread> all_threads;
+      // add worker
+      for (_u64 i = 0; i < this->max_nthreads; i++) {
+        std::string thread_name = "WORKER" + std::to_string(i);
+        if (verbose_)
+          std::cout << thread_name << std::endl;
+        std::thread t(&PQFlashIndex<T>::page_search_worker_thread, this, query, query_num,
+                      k_search, mem_L, l_search, indices, distances, beam_width,
+                      io_limit, use_reorder_data, use_ratio,use_pipeline, stats, i,
+                      thread_stats + i);
+
+        pthread_t pthread_handle =
+            *reinterpret_cast<pthread_t *>(t.native_handle());
+
+        pthread_setname_np(pthread_handle, thread_name.c_str());
+        all_threads.push_back(std::move(t));
+      }
+      for (auto &t : all_threads) {
+        t.join();
+      }
+
+      for (_u64 i = 0; i < this->max_nthreads; i++) {
+        ThreadStats *thread_stat = thread_stats + i;
+        std::cout << "[WORKER Thread #" << i << "] ";
+        std::cout << "cpu usage:"
+                  << (thread_stat->cpu_us) / thread_stat->total_us << std::endl;
+      }
+  }
+  template<typename T>
   void PQFlashIndex<T>::page_search(
       const T *query1, const _u64 k_search, const _u32 mem_L, const _u64 l_search, _u64 *indices,
       float *distances, const _u64 beam_width, const _u32 io_limit,
@@ -343,7 +429,7 @@ namespace diskann {
           }
         }
       }
-      cpu_timer.reset();
+
       // compute remaining nodes in the pages that are fetched in the previous round
       for (size_t i = 0; i < last_io_ids.size(); ++i) {
         const unsigned last_io_id = last_io_ids[i];
@@ -472,9 +558,7 @@ namespace diskann {
         }
       }
 
-      if (stats != nullptr) {
-        stats->cpu_us += (double) cpu_timer.elapsed();
-      }
+      
 
       // update best inserted position
       if (nk <= k)
@@ -520,6 +604,7 @@ namespace diskann {
 
     if (stats != nullptr) {
       stats->total_us = (double) query_timer.elapsed();
+      stats->cpu_us += (double) cpu_timer.elapsed();
     }
   }
 
@@ -790,27 +875,8 @@ namespace diskann {
           }
           num_ios++;
         }
-        if(use_affinity_){
-          for(_u64 i = 0; i < prefetch_block_ids.size(); i++){
-            unsigned pid = prefetch_block_ids[i];
-            char * sector_buf_ptr = sector_scratch + sector_scratch_idx * SECTOR_LEN;
-            unsigned id = gp_layout_[pid][0]; // 只把每个块的第一个点放入
-            std::pair<_u32, char *> fnhood;
-            fnhood.first = id;
-            fnhood.second = sector_buf_ptr;
-            prefetch_frontier_nhoods.push_back(fnhood);
-            frontier_read_reqs.emplace_back(
-                (pid+1) * SECTOR_LEN, SECTOR_LEN,
-                sector_buf_ptr);
-            sector_scratch_idx++;
-            if (stats != nullptr) {
-              stats->n_4k++;
-              stats->n_ios++;
-              // block_visited_in_this_iter.push_back( BlockVisited(pid, std::chrono::high_resolution_clock::now()));
-            }
-            num_ios++;
-          }
-
+        if (stats != nullptr) {
+          stats->cpu_us += (double) cpu_timer.elapsed();
         }
 
         io_timer.reset();
@@ -824,6 +890,7 @@ namespace diskann {
           std::cout << io_timer.elapsed() << std::endl;
           std::cout << "End" << std::endl;
         }
+        cpu_timer.reset();
 
         if (stats != nullptr) {
             stats->io_us += (double) io_timer.elapsed();
@@ -853,12 +920,10 @@ namespace diskann {
         memcpy((node_buf + disk_bytes_per_point), &nnr, sizeof(unsigned));
         memcpy((node_buf + disk_bytes_per_point + sizeof(unsigned)), cnhood, sizeof(unsigned)*nnr);
 
-        cpu_timer.reset();
+        
         compute_extact_dists_and_push(node_buf, id);
         compute_and_push_nbrs(node_buf, nk);
-        if (stats != nullptr) {
-          stats->cpu_us += (double) cpu_timer.elapsed();
-        }
+        
       }
 
       cpu_timer.reset();
@@ -926,10 +991,6 @@ namespace diskann {
         }
       }
 
-      if (stats != nullptr) {
-        stats->cpu_us += (double) cpu_timer.elapsed();
-      }
-
       // update best inserted position
       if (nk <= k)
         k = nk;  // k is the best position in retset updated in this round.
@@ -974,6 +1035,7 @@ namespace diskann {
 
     if (stats != nullptr) {
       stats->total_us = (double) query_timer.elapsed();
+      stats->cpu_us += (double) cpu_timer.elapsed();
     }
   }
 

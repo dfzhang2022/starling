@@ -63,6 +63,7 @@ namespace diskann {
     float scheduler_cpu_us = 0;
 
     float wait_ring_lock_us = 0;
+    float awaiter_time_us = 0;
     
     
   };
