@@ -54,6 +54,7 @@ namespace diskann {
     all_timer.reset();
     for (size_t q_id = thread_id;; q_id = q_id + max_nthreads) {
       if (q_id >= query_num) {
+        thread_stat->total_us += all_timer.elapsed();
         return;
       }
 
@@ -74,7 +75,7 @@ namespace diskann {
       }
       thread_stat->cpu_us += (stats + q_id)->cpu_us;
     }
-    thread_stat->total_us += all_timer.elapsed();
+    
   }
   template<typename T>
   void PQFlashIndex<T>::starling_search(const T *query, const size_t query_num,
@@ -926,7 +927,7 @@ namespace diskann {
         
       }
 
-      cpu_timer.reset();
+      
       // compute only the desired vectors in the pages - one for each page
       // postpone remaining vectors to the next round
       for (auto &frontier_nhood : frontier_nhoods) {

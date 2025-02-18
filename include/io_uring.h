@@ -237,9 +237,9 @@ class Countdown {
   explicit Countdown(std::uint64_t counter) noexcept : counter_(counter) {}
 
   void Decrement() noexcept {
-      mtx.lock();
+      // mtx.lock();
      counter_--; 
-     mtx.unlock();
+    //  mtx.unlock();
      }
 
   bool IsZero() const noexcept { return counter_ == 0; }
@@ -248,7 +248,8 @@ class Countdown {
 
  private:
   std::mutex mtx;
-  std::uint64_t counter_;
+  // std::uint64_t counter_;
+  std::atomic<int> counter_;
 };
 
 inline cppcoro::task<void> DrainRing(IOUring &ring,

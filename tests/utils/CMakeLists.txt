@@ -69,10 +69,10 @@ add_executable(create_disk_layout create_disk_layout.cpp)
 target_link_libraries(create_disk_layout ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS})
 
 add_executable(index_relayout index_relayout.cpp)
-target_link_libraries(index_relayout ${PROJECT_NAME})
+target_link_libraries(index_relayout ${PROJECT_NAME} ${DISKANN_ASYNC_LIB})
 
 add_executable(calc_affinity calc_affinity.cpp)
-target_link_libraries(calc_affinity ${PROJECT_NAME} Boost::program_options)
+target_link_libraries(calc_affinity ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} Boost::program_options)
 
 
 

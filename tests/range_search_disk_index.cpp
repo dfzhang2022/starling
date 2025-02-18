@@ -108,8 +108,11 @@ int search_disk_index(diskann::Metric&   metric,
   reader.reset(new LinuxAlignedFileReader());
 #endif
 
+  std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = nullptr;
+
+  // TODO not support
   std::unique_ptr<diskann::PQFlashIndex<T>> _pFlashIndex(
-      new diskann::PQFlashIndex<T>(reader, use_page_search, metric));
+      new diskann::PQFlashIndex<T>(reader,spdk_reader, use_page_search, metric));
 
   int res = _pFlashIndex->load(num_threads, index_path_prefix.c_str(), disk_file_path);
 

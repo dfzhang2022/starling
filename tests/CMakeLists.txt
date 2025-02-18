@@ -2,9 +2,8 @@
 # Licensed under the MIT license.
 
 set(CMAKE_CXX_STANDARD 20)
-# find_library(URING_LIBRARY uring cppcoro)
 
-# target_link_libraries(storage PUBLIC uring cppcoro)
+
 add_executable(build_memory_index build_memory_index.cpp)
 target_link_libraries(build_memory_index ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} Boost::program_options)
 
@@ -32,7 +31,16 @@ add_executable(test_insert_deletes_consolidate test_insert_deletes_consolidate.c
 target_link_libraries(test_insert_deletes_consolidate ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} Boost::program_options)
 
 add_executable(search_memory_index_dynamic search_memory_index_dynamic.cpp)
-target_link_libraries(search_memory_index_dynamic ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} Boost::program_options )
+target_link_libraries(search_memory_index_dynamic ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} Boost::program_options ${DISKANN_ASYNC_LIB})
 
 add_executable(search_disk_index_save_freq search_disk_index_save_freq.cpp)
 target_link_libraries(search_disk_index_save_freq ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} Boost::program_options )
+
+add_executable(test_cppcoro test_cppcoro.cpp)
+target_link_libraries(test_cppcoro ${PROJECT_NAME} ${DISKANN_ASYNC_LIB} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} Boost::program_options )
+
+add_executable(perf_spdk perf_spdk.cpp)
+target_link_libraries(perf_spdk ${PROJECT_NAME})
+
+add_executable(hello_world hello_world.cpp)
+target_link_libraries(hello_world ${PROJECT_NAME})

@@ -35,7 +35,13 @@
 
 #define WARMUP false
 
+
+#define READ_SECTOR_LEN (size_t) 4096
+
+
+
 namespace po = boost::program_options;
+using namespace diskann;
 
 void print_stats(std::string category, std::vector<float> percentiles,
                  std::vector<float> results) {
@@ -51,6 +57,63 @@ void print_stats(std::string category, std::vector<float> percentiles,
   diskann::cout << std::endl;
 }
 
+void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
+  auto meta_pair = diskann::get_disk_index_meta(indexname);
+  _u64 actual_index_size = get_file_size(indexname);
+  _u64 expected_file_size, expected_npts;
+  _u64                               _nd;
+  _u64                               max_node_len;
+  if (meta_pair.first) {
+      // new version
+      expected_file_size = meta_pair.second.back();
+      expected_npts = meta_pair.second.front();
+  } else {
+      expected_file_size = meta_pair.second.front();
+      expected_npts = meta_pair.second[1];
+  }
+
+  if (expected_file_size != actual_index_size) {
+    diskann::cout << "File size mismatch for " << indexname
+                  << " (size: " << actual_index_size << ")"
+                  << " with meta-data size: " << expected_file_size << std::endl;
+    exit(-1);
+  }
+  if (expected_npts != _nd) {
+    diskann::cout << "expect _nd: " << _nd
+                  << " actual _nd: " << expected_npts << std::endl;
+    exit(-1);
+  }
+  max_node_len = meta_pair.second[3];
+  unsigned nnodes_per_sector = meta_pair.second[4];
+  
+
+  
+  _u64 file_size = READ_SECTOR_LEN + READ_SECTOR_LEN * ((_nd + nnodes_per_sector - 1) / nnodes_per_sector);
+  std::cout << "size "<< file_size << std::endl;
+  std::unique_ptr<char[]> mem_index =
+      std::make_unique<char[]>(file_size);
+  std::ifstream diskann_reader(indexname);
+  diskann_reader.read(mem_index.get(),file_size);
+
+  unsigned batch_size = 1024;
+  unsigned sector_size = ((_nd + nnodes_per_sector - 1) / nnodes_per_sector) + 1;
+
+  unsigned wrt_idx = 0;
+
+  char *buf_2 = (char *)spdk_zmalloc(READ_SECTOR_LEN* batch_size, READ_SECTOR_LEN, NULL,
+    SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+  
+  while(wrt_idx<sector_size){
+    unsigned wrt_size_iter = std::min(sector_size - wrt_idx , batch_size);
+    memcpy(buf_2,mem_index.get()+wrt_idx*READ_SECTOR_LEN,wrt_size_iter*READ_SECTOR_LEN);
+    reader->SyncWrite(buf_2,wrt_size_iter*READ_SECTOR_LEN,wrt_idx,0);
+    wrt_idx += wrt_size_iter;
+  }
+
+
+
+}
+
 template<typename T>
 int search_disk_index(
     diskann::Metric& metric, const std::string& index_path_prefix,
@@ -58,16 +121,29 @@ int search_disk_index(
     const std::string& result_output_prefix, const std::string& query_file,
     const std::string& gt_file, 
     const std::string& disk_file_path,
-    const unsigned num_threads, const unsigned recall_at,
-    const unsigned beamwidth, const unsigned num_nodes_to_cache,
-    const _u32 search_io_limit, const std::vector<unsigned>& Lvec,
-    const _u32 mem_L,
-    const bool use_page_search=true,
-    const bool use_pipeline=true,
-    const bool use_coro = false,
-    const float use_ratio=1.0,
-    const bool use_reorder_data = false,
-    const bool use_sq = false) {
+     const std::vector<unsigned>& Lvec,
+     SearchParams& params) {
+
+
+  unsigned num_threads = params.num_threads;
+  unsigned recall_at = params.recall_at;
+  unsigned beamwidth = params.beam_width;
+  unsigned num_nodes_to_cache = params.num_nodes_to_cache;
+  _u32 search_io_limit=params.io_limit;
+  _u32 mem_L = params.mem_L;
+
+  // page search
+  bool use_page_search = params.use_page_search;
+  bool use_pipeline=params.use_pipeline;
+  float use_ratio=params.use_ratio;
+  bool use_reorder_data = params.use_reorder_data;
+  bool use_sq = params.use_sq;
+
+  bool use_coro = params.use_coro;
+  bool pure_io = params.pure_io;
+
+
+
   diskann::cout << "Search parameters: #threads: " << num_threads << ", ";
   if (beamwidth <= 0)
     diskann::cout << "beamwidth to be optimized for each L value" << std::flush;
@@ -101,22 +177,28 @@ int search_disk_index(
   }
 
   std::shared_ptr<AlignedFileReader> reader = nullptr;
-#ifdef _WINDOWS
-#ifndef USE_BING_INFRA
-  reader.reset(new WindowsAlignedFileReader());
-#else
-  reader.reset(new diskann::BingAlignedFileReader());
-#endif
-#else
-  reader.reset(new LinuxAlignedFileReader());
-#endif
+// #ifdef _WINDOWS
+// #ifndef USE_BING_INFRA
+//   reader.reset(new WindowsAlignedFileReader());
+// #else
+//   reader.reset(new diskann::BingAlignedFileReader());
+// #endif
+// #else
+  reader.reset(new LinuxAlignedFileReader()); // Only Linux
+// #endif
+
+  std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = ssdps::SpdkWrapper::create(1);
+  spdk_reader->Init();
 
   if(use_sq && !std::is_same<T, float>::value){
     std::cout << "erro, only support float sq" << std::endl;
     exit(-1);
   }
   std::unique_ptr<diskann::PQFlashIndex<T>> _pFlashIndex(
-      new diskann::PQFlashIndex<T>(reader, use_page_search, metric, use_sq));
+      new diskann::PQFlashIndex<T>(reader,spdk_reader, use_page_search, metric, use_sq));
+  // _pFlashIndex->set_ncoroutines(MAX_COROUTINE);
+  _pFlashIndex->set_ncoroutines(params.coro_size);
+  _pFlashIndex->load_search_params(params);
 
   int res = _pFlashIndex->load(num_threads, index_path_prefix.c_str(), disk_file_path);
 
@@ -125,6 +207,7 @@ int search_disk_index(
   }
 
   _pFlashIndex->set_query_aligned_dim(query_aligned_dim);
+  
 
   size_t load_mem = getCurrentRSS();
 
@@ -133,7 +216,7 @@ int search_disk_index(
     _pFlashIndex->load_mem_index(metric, query_dim, mem_index_path, num_threads, mem_L);
   }
 
-  _pFlashIndex->set_ncoroutines(MAX_COROUTINE);
+  
 
   // cache bfs levels
   std::vector<uint32_t> node_list;
@@ -256,80 +339,47 @@ int search_disk_index(
 
     std::vector<uint64_t> query_result_ids_64(recall_at * query_num);
     auto                  s = std::chrono::high_resolution_clock::now();
-    query_num = SEARCH_QUERY;
+    // query_num = SEARCH_QUERY;
+    if(!params.query_num){
+      query_num = params.query_num;
+    }
     // _pFlashIndex->verbose_ = true;
     // Using branching outside the for loop instead of inside and 
     // std::function/std::mem_fn for less switching and function calling overhead
-    if (use_page_search) {
-      if(use_sq){
-  #pragma omp parallel for schedule(dynamic, 1)
-        for (_s64 i = 0; i < (int64_t) query_num; i++) {
-          _pFlashIndex->page_search_sq(
-              query + (i * query_aligned_dim), recall_at, mem_L, L,
-              query_result_ids_64.data() + (i * recall_at),
-              query_result_dists[test_id].data() + (i * recall_at),
-              optimized_beamwidth, search_io_limit, use_reorder_data, use_ratio, stats + i);
-        }
-      }else{
-        if (use_coro) {
+    std::cout<<"Query num is "<<query_num<<std::endl;
+    if (pure_io) {
+      if (use_coro) {
+        _pFlashIndex->pure_io_search(query, query_num, optimized_beamwidth,
+                                     search_io_limit, stats);
 
+      } else {
+        _pFlashIndex->pure_libaio_search(query, query_num, optimized_beamwidth,
+                                         search_io_limit, stats);
+      }
+    } else {
+      if (use_page_search) {
+        if (use_coro) {
           _pFlashIndex->bqann_search(
               query, query_num, recall_at, mem_L, L, query_result_ids_64.data(),
               query_result_dists[test_id].data(), optimized_beamwidth,
               search_io_limit, use_reorder_data, use_ratio, stats);
-          // _pFlashIndex->pure_io_search(query, query_num,optimized_beamwidth,
-          //     search_io_limit, stats);
-          } else {
-            
-            bool pipeline = use_pipeline;
-
-            _pFlashIndex->starling_search(query, query_num, recall_at, mem_L, L, query_result_ids_64.data(),
+        } else {
+          bool pipeline = use_pipeline;
+          _pFlashIndex->starling_search(
+              query, query_num, recall_at, mem_L, L, query_result_ids_64.data(),
               query_result_dists[test_id].data(), optimized_beamwidth,
               search_io_limit, use_reorder_data, use_ratio, pipeline, stats);
-            // std::mutex set_thread_mtx;
-            // std::vector<bool> tmp_bool_vec(num_threads,false);
-            // bool set_already = false;
-            // int idx = 0;
-//             if (pipeline) {
-//               std::cout << "Pipeline" << std::endl;
-// #pragma omp parallel for schedule(dynamic, 1)
-//               for (_s64 i = 0; i < (int64_t) query_num; i++) {
-
-//                 // TODO 打印每个线程的执行的时间
-
-//                 _pFlashIndex->page_search(
-//                     query + (i * query_aligned_dim), recall_at, mem_L, L,
-//                     query_result_ids_64.data() + (i * recall_at),
-//                     query_result_dists[test_id].data() + (i * recall_at),
-//                     optimized_beamwidth, search_io_limit, use_reorder_data,
-//                     use_ratio, stats + i);
-//               }
-//               } else {
-//               std::cout << "No pipeline" << std::endl;
-// #pragma omp parallel for schedule(dynamic, 1)
-//               for (_s64 i = 0; i < (int64_t) query_num; i++) {
-//                 _pFlashIndex->page_search_no_pipeline(
-//                     query + (i * query_aligned_dim), recall_at, mem_L, L,
-//                     query_result_ids_64.data() + (i * recall_at),
-//                     query_result_dists[test_id].data() + (i * recall_at),
-//                     optimized_beamwidth, search_io_limit, use_reorder_data,
-//                     use_ratio, stats + i);
-//               }
-//               }
-            }
-      }
-    } else {
-      if(use_sq){
-        std::cout << "diskann current not support sq..." << std::endl;
-        exit(-1);
-      }
+        }
+      } else {
 #pragma omp parallel for schedule(dynamic, 1)
-      for (_s64 i = 0; i < (int64_t) query_num; i++) {
-        _pFlashIndex->cached_beam_search(
-            query + (i * query_aligned_dim), recall_at, L,
-            query_result_ids_64.data() + (i * recall_at),
-            query_result_dists[test_id].data() + (i * recall_at),
-            optimized_beamwidth, search_io_limit, use_reorder_data, stats + i, mem_L);
+        for (_s64 i = 0; i < (int64_t) query_num; i++) {
+          _pFlashIndex->cached_beam_search(
+              query + (i * query_aligned_dim), recall_at, L,
+              query_result_ids_64.data() + (i * recall_at),
+              query_result_dists[test_id].data() + (i * recall_at),
+              optimized_beamwidth, search_io_limit, use_reorder_data, stats + i,
+              mem_L);
+        }
       }
     }
     auto                          e = std::chrono::high_resolution_clock::now();
@@ -542,7 +592,10 @@ int main(int argc, char** argv) {
   bool                  page_expansion = true;
   bool                  use_coro = false;
   float                 use_ratio = 1.0;
+  bool                  pure_io = false;
+  unsigned query_num = 0;
   bool use_sq = false;
+  unsigned coro_size = 0;
 
   po::options_description desc{"Arguments"};
   try {
@@ -567,6 +620,8 @@ int main(int argc, char** argv) {
         "ground truth file for the queryset");
     desc.add_options()("recall_at,K", po::value<uint32_t>(&K)->required(),
                        "Number of neighbors to be returned");
+    desc.add_options()("query_num", po::value<uint32_t>(&query_num)->default_value(0),
+                       "Set if you want execute only first# query. 0 is default.");
     desc.add_options()("search_list,L",
                        po::value<std::vector<unsigned>>(&Lvec)->multitoken(),
                        "List of L values of search");
@@ -602,6 +657,10 @@ int main(int argc, char** argv) {
                        "Use 1 for using page_expansion in search (default), 0 for node_expansion");
     desc.add_options()("use_coro", po::value<bool>(&use_coro)->default_value(0),
                        "Use 1 for using coroutine in IO, 0 for using coroutine (default).");
+    desc.add_options()("coro_size", po::value<unsigned>(&coro_size)->default_value(1),
+                       "coro size per thread");
+    desc.add_options()("pure_io", po::value<bool>(&pure_io)->default_value(0),
+                       "Use 1 for testing pure IO, 0 for not (default).");
     desc.add_options()("use_ratio", po::value<float>(&use_ratio)->default_value(1.0f),
                        "The percentage of how many vectors in a page to search each time");
     desc.add_options()("disk_file_path", po::value<std::string>(&disk_file_path)->required(),
@@ -664,25 +723,39 @@ int main(int argc, char** argv) {
     return -1;
   }
 
+  diskann::SearchParams params;
+  params.num_threads = num_threads;
+  params.recall_at = K;
+  params.beam_width = W;
+  params.num_nodes_to_cache = num_nodes_to_cache;
+  params.io_limit = search_io_limit;
+  params.mem_L = mem_L;
+
+  params.use_page_search = use_page_search;
+  params.use_pipeline = use_pipeline;
+  params.use_ratio = use_ratio;
+  params.use_reorder_data = use_reorder_data;
+  params.use_sq = use_sq;
+
+  params.use_coro = use_coro;
+  params.coro_size = coro_size;
+  params.pure_io = pure_io;
+
+  params.query_num = query_num;
+
   try {
     if (data_type == std::string("float"))
       return search_disk_index<float>(
           metric, index_path_prefix, mem_index_path, result_path_prefix,
-          query_file, gt_file, disk_file_path, num_threads, K, W,
-          num_nodes_to_cache, search_io_limit, Lvec, mem_L, use_page_search,
-          use_pipeline, use_coro, use_ratio, use_reorder_data, use_sq);
+          query_file, gt_file, disk_file_path,Lvec, params);
     else if (data_type == std::string("int8"))
       return search_disk_index<int8_t>(
           metric, index_path_prefix, mem_index_path, result_path_prefix,
-          query_file, gt_file, disk_file_path, num_threads, K, W,
-          num_nodes_to_cache, search_io_limit, Lvec, mem_L, use_page_search,
-          use_pipeline, use_coro, use_ratio, use_reorder_data);
+          query_file, gt_file, disk_file_path, Lvec, params);
     else if (data_type == std::string("uint8"))
       return search_disk_index<uint8_t>(
           metric, index_path_prefix, mem_index_path, result_path_prefix,
-          query_file, gt_file, disk_file_path, num_threads, K, W,
-          num_nodes_to_cache, search_io_limit, Lvec, mem_L, use_page_search,
-          use_pipeline, use_coro, use_ratio, use_reorder_data);
+          query_file, gt_file, disk_file_path, Lvec, params);
     else {
       std::cerr << "Unsupported data type. Use float or int8 or uint8"
                 << std::endl;

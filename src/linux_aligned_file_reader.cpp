@@ -8,7 +8,7 @@
 #include <iostream>
 #include "tsl/robin_map.h"
 #include "utils.h"
-#define MAX_EVENTS 1024
+#define MAX_EVENTS 2048
 
 namespace {
   typedef struct io_event io_event_t;
@@ -241,7 +241,7 @@ void LinuxAlignedFileReader::get_events(IOContext& ctx, int n_ops) {
   auto ret = io_getevents(ctx, (int64_t) n_ops, (int64_t) n_ops,
                           evts.data(), nullptr);
   if (ret != (int64_t) n_ops) {
-    std::cerr << "io_getevents() failed; returned " << ret;
+    std::cerr << "io_getevents() failed; returned " << ret<<"."<<std::endl;
     exit(-1);
   }
 }

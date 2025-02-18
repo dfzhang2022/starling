@@ -64,4 +64,30 @@ namespace diskann {
       }
     }
   }
+
+  struct SearchParams {
+    // ANNS Fundamental Settings.
+    size_t recall_at = 10;
+    size_t beam_width = 0;
+    size_t io_limit = 10000;
+    size_t mem_L;
+    size_t num_threads;
+    size_t num_nodes_to_cache = 0;
+    size_t query_num = 0;
+
+    // Page Search related.
+    bool  use_page_search = true;
+    float use_ratio = 1.0f;
+    bool  use_pipeline = true;
+    bool  use_reorder_data = false;
+    bool  use_sq = false;
+
+    // Coro Search related.
+    bool   use_coro = false;
+    size_t coro_size = 8;
+    size_t coro_io_nthreads = 0;
+
+    // IO related.
+    bool pure_io = false;
+  };
 }  // namespace

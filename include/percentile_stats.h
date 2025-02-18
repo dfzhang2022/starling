@@ -58,12 +58,20 @@ namespace diskann {
     float io_us = 0;     // total time spent in IO
     float cpu_us = 0;    // total time spent in CPU
     float executing_in_coro_us = 0;    // total time spent in coro
+    float io_submit_us = 0;
+    float io_reap_us = 0;
 
     float scheduler_total_us = 0;
     float scheduler_cpu_us = 0;
+    float scheduler_wait_us = 0;
 
     float wait_ring_lock_us = 0;
     float awaiter_time_us = 0;
+    float awaiter_middle_time_us = 0;
+
+
+    unsigned n_ios = 0;
+    unsigned n_hops = 0;        // # search hops
     
     
   };

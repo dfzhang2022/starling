@@ -25,6 +25,13 @@
 #include "tsl/robin_set.h"
 
 namespace diskann {
+
+  void print_sq_poll_kernel_thread_status() {
+    if (system("ps --ppid 2 | grep io_uring-sq") == 0)
+      printf("Kernel thread io_uring-sq found running...\n");
+    else
+      printf("Kernel thread io_uring-sq is not running.\n");
+  }
   template<typename T>
   void PQFlashIndex<T>::init_node_visit_counter() {
     this->node_visit_counter.clear();
@@ -42,11 +49,13 @@ namespace diskann {
     return next_qid++;
   }
 
+
   template<typename T>
   PQFlashIndex<T>::PQFlashIndex(std::shared_ptr<AlignedFileReader> &fileReader,
+                                std::shared_ptr< ssdps::SpdkWrapper> &spdkReader,
                                 const bool use_page_search,
                                 diskann::Metric                     m, bool use_sq)
-      : reader(fileReader), metric(m) {
+      : reader(fileReader),spdk_reader(spdkReader), metric(m) {
     if (m == diskann::Metric::COSINE || m == diskann::Metric::INNER_PRODUCT) {
       if (std::is_floating_point<T>::value) {
         diskann::cout << "Cosine metric chosen for (normalized) float data."
@@ -147,10 +156,11 @@ namespace diskann {
       }
     }
     load_flag = true;
+    std::cout<<"setup_thread_data() done."<<std::endl;
   }
   template<typename T>
   void PQFlashIndex<T>::setup_coroutine_data(_u64 nthreads) {
-    size_t coro_num = nthreads * MAX_COROUTINE;
+    size_t coro_num = nthreads * max_ncoroutines;
     diskann::cout << "Setting up coroutine-specific contexts for #coros: "
                   << coro_num << std::endl;
 // omp parallel for to generate unique thread IDs
@@ -158,7 +168,7 @@ namespace diskann {
     for (_s64 thread = 0; thread < (_s64) nthreads; thread++) {
 #pragma omp critical
       {
-        for (size_t k = 0; k < MAX_COROUTINE; k++) {
+        for (size_t k = 0; k < max_ncoroutines; k++) {
           QueryScratch<T> scratch;
           _u64            coord_alloc_size =
               ROUND_UP(sizeof(T) * MAX_N_CMPS * this->aligned_dim, 256);
@@ -196,11 +206,11 @@ namespace diskann {
     std::cout<<"this->coro_data size: "<<this->coro_data.size()<<std::endl;
     this->n_io_executing.resize(nthreads);
     for(size_t k = 0;k<nthreads;k++){
-      this->n_io_executing[k].resize(MAX_COROUTINE,0);
+      this->n_io_executing[k].resize(max_ncoroutines,0);
     }
     this->n_io_completed.resize(nthreads);
     for(size_t k = 0;k<nthreads;k++){
-      this->n_io_completed[k].resize(MAX_COROUTINE,0);
+      this->n_io_completed[k].resize(max_ncoroutines,0);
     }
     // this->coro_io_queue_mutex.reserve(coro_num);
     // this->coro_io_queue_mutexes.resize(nthreads, std::mutex());
@@ -210,16 +220,63 @@ namespace diskann {
     // }
     this->io_state.resize(nthreads);
     for(size_t k = 0;k<nthreads;k++){
-      this->io_state[k].resize(MAX_COROUTINE,IORequestState::Idle);
+      this->io_state[k].resize(max_ncoroutines,IORequestState::Idle);
     }
+
+    std::cout<<"atomic_mark.size(): "<<atomic_mark.size()<<std::endl;
+    // this->atomic_mark.resize(nthreads*(max_ncoroutines));
+    // for(size_t k = 0;k<nthreads;k++){
+    //   for(size_t idx = 0;idx<max_ncoroutines;idx++){
+    //     std::atomic<int> tmp(0);
+    //   this->atomic_mark.emplace_back(tmp);
+    //   }
+    // }
+    // this->atomic_mark = new std::vector<std::vector<std::atomic<int>>>(nthreads, std::vector<std::atomic<int>>(max_ncoroutines));
+    // for (size_t i = 0; i < rows; ++i) {
+    //     for (size_t j = 0; j < cols; ++j) {
+    //         atomic_mark[i][j].store(0, std::memory_order_relaxed);  // 初始化为 0
+    //     }
+    // }
     for(size_t k = 0;k<nthreads;k++){
       this->thread_complete_io_queue.emplace_back(new ConcurrentQueue<int>());
+    }
+    for(size_t k = 0;k<nthreads;k++){
+      this->batch_read_queue_thread.emplace_back(new ConcurrentQueue<AlignedRead>());
+    }    
+    for(size_t k = 0;k<nthreads;k++){
+      this->q.emplace_back(new moodycamel::ConcurrentQueue<AlignedRead*>());
     }
 
     this->handles_map.resize(nthreads);
     for (size_t k = 0; k < nthreads; k++) {
-      this->handles_map[k].resize(MAX_COROUTINE);
+      this->handles_map[k].resize(max_ncoroutines);
     }
+    query_io_per_coro.resize(nthreads);
+    this->ctx_vec.resize(nthreads);
+    libaio_cnt.resize(nthreads);
+    for (size_t k = 0; k < nthreads; k++) {
+      this->ctx_vec[k].resize(max_ncoroutines);
+      libaio_cnt[k].resize(max_ncoroutines);
+      query_io_per_coro[k].resize(max_ncoroutines);
+      for (size_t t =  0; t < max_ncoroutines; t++) {
+        std::cout<<t<<std::endl;
+        this->ctx_vec[k][t] = 0;
+        int ret = io_setup(64, &(ctx_vec[k][t]));
+        if (ret != 0) {
+          assert(errno != EAGAIN);
+          assert(errno != ENOMEM);
+          std::cerr << "io_setup() failed; returned " << ret << ", errno=" << errno
+                    << ":" << ::strerror(errno) << std::endl;
+          return;
+        } else {
+          diskann::cout<< " allocating ctx: " << ctx_vec[k][t]<< std::endl;
+        }
+        // this->ctx_vec[k].emplace_back(a);
+        libaio_cnt[k][t] = 0;
+        atomic_mark[k*max_ncoroutines + t] = 2;
+      }
+    }
+
     auto result = io_uring_queue_init(1024, &ring_, 0);
     if (result != 0) {
       std::cout << "io_uring init error!" << std::endl;
@@ -227,15 +284,30 @@ namespace diskann {
 
     size_t ring_num = MAX_IO_RING_NUM;
     // size_t ring_num = nthreads;
-
+    
+    struct io_uring_params params_io;
+    memset(&params_io, 0, sizeof(params_io));
+    params_io.flags |= IORING_SETUP_SQPOLL;
+    // params_io.flags |= IORING_SETUP_SUBMIT_ALL;
+    // params.sq_thread_idle = 2000;
+    int flag = 0 ;
+    // flag = flag | IORING_SETUP_SQPOLL;
+    // flag = flag | IORING_SETUP_IOPOLL;
+    // flag = flag | IORING_SETUP_SUBMIT_ALL;
     this->rings_.resize(ring_num);
     for (size_t k = 0; k < ring_num; k++) {
-      auto result = io_uring_queue_init(1024, &(rings_[k]), 0);
+      auto result = io_uring_queue_init(1024, &(rings_[k]), flag);
       if (result != 0) {
         std::cout << "io_urings init error! " << k << std::endl;
       }
     }
+    print_sq_poll_kernel_thread_status();
+    // this->batch_read_queue.resize(nthreads);
+    // for(size_t k = 0;k<nthreads;k++){
+    //   this->batch_read_queue.emplace_back(new ConcurrentQueue<AlignedRead>());
+    // }
     load_flag = true;
+    std::cout<<"done."<<std::endl;
   }
 
   template<typename T>
@@ -930,8 +1002,17 @@ namespace diskann {
     std::string index_fname(disk_index_file);
     reader->open(index_fname);
     this->index_fd_ = open(index_fname.c_str(),O_RDONLY | O_NOATIME |O_DIRECT);
-    this->setup_thread_data(num_threads);
-    this->setup_coroutine_data(num_threads);
+    
+    if(use_bq_search_){
+      this->setup_coroutine_data(num_threads);
+      this->setup_thread_data(1);
+
+    }
+    else{
+      this->setup_thread_data(num_threads);
+    }
+
+    
     this->max_nthreads = num_threads;
 
 #endif

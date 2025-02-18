@@ -58,6 +58,17 @@ namespace diskann {
       lk.unlock();
     }
 
+    int batch_push(std::vector<T>& new_val_vec) {
+      int cnt = 0;
+      mutex_locker lk(this->mut);
+      for(auto item : new_val_vec){
+        this->q.push(item);
+        cnt++;
+      }
+      lk.unlock();
+      return cnt;
+    }
+
     template<class Iterator>
     void insert(Iterator iter_begin, Iterator iter_end) {
       mutex_locker lk(this->mut);
@@ -81,6 +92,29 @@ namespace diskann {
         // << ret.ctx << "\n";
         lk.unlock();
         return ret;
+      }
+    }
+    // BATCH POP FRONT
+    // pop for expected num elements, result records the
+    // actual # poped.
+    std::vector<T> batch_pop(int expected, int& result) {
+      std::vector<T> tmp_ret;
+      tmp_ret.clear();
+      int cnt = 0;
+      mutex_locker lk(this->mut);
+      if (this->q.empty()) {
+        lk.unlock();
+        return tmp_ret;
+      } else {
+        while(!this->q.empty()&&cnt<expected){
+          T ret = this->q.front();
+          this->q.pop();
+          tmp_ret.push_back(ret);
+          cnt++;
+        }
+        result = cnt;
+        lk.unlock();
+        return tmp_ret;
       }
     }
 

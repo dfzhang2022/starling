@@ -63,6 +63,11 @@ struct AlignedRead {
   void*    buf;     // where to read into
 
   uint64_t block_id = -1;
+  uint64_t thread_id = -1;
+  uint64_t coro_id = -1;
+
+  typedef std::chrono::high_resolution_clock _clock;
+  std::chrono::time_point<_clock>            begin_ts;
 
   AlignedRead() : offset(0), len(0), buf(nullptr) {
   }
@@ -80,6 +85,40 @@ struct AlignedRead {
     assert(IS_512_ALIGNED(len));
     assert(IS_512_ALIGNED(buf));
     // assert(malloc_usable_size(buf) >= len);
+  }
+  AlignedRead(uint64_t offset, uint64_t len, void* buf, uint64_t block_id,
+              uint64_t thread_id, uint64_t coro_id)
+      : offset(offset), len(len), buf(buf), block_id(block_id),
+        thread_id(thread_id), coro_id(coro_id) {
+    assert(IS_512_ALIGNED(offset));
+    assert(IS_512_ALIGNED(len));
+    assert(IS_512_ALIGNED(buf));
+    // assert(malloc_usable_size(buf) >= len);
+  }
+  AlignedRead(const AlignedRead& another){
+    this->offset = another.offset;
+    this->len = another.len;
+    this->buf = another.buf;
+
+    this->block_id = another.block_id;
+    this->thread_id = another.thread_id;
+    this->coro_id = another.coro_id;
+  }
+  void print(){
+    std::cout<<block_id<<","<<thread_id<<","<<coro_id<<std::endl;
+  }
+};
+
+struct BatchAlignedRead{
+  std::vector<AlignedRead> req_vec;
+  _u64 thread_id = -1;
+  _u64 coro_id = -1;
+  BatchAlignedRead()
+      : thread_id(-1), coro_id(-1) {
+        req_vec.clear();
+  }
+  BatchAlignedRead(_u64 thread_id,_u64 coro_id)
+      : thread_id(thread_id), coro_id(coro_id) {
   }
 };
 

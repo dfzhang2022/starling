@@ -1,16 +1,21 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license.
-
+#ifndef PQ_FLASH_INDEX_H
+#define PQ_FLASH_INDEX_H
 #pragma once
 #include <cassert>
 #include <sstream>
 #include <stack>
 #include <string>
 #include <map>
+#include <atomic>
 #include "tsl/robin_map.h"
 #include "tsl/robin_set.h"
 
+#include "concurrentqueue.h"
+
 #include "aligned_file_reader.h"
+#include "spdk_wrapper.h"
 #include "concurrent_queue.h"
 #include "neighbor.h"
 #include "parameters.h"
@@ -21,6 +26,9 @@
 #include "index.h"
 #include "pq_flash_index_utils.h"
 
+
+
+#include "libaio.h"
 #include "file.h"
 #include "io_uring.h"
 #include "cppcoro/sync_wait.hpp"
@@ -31,7 +39,7 @@
 #define MAX_GRAPH_DEGREE 512
 #define MAX_N_CMPS 16384
 #define SECTOR_LEN (_u64) 4096
-#define MAX_N_SECTOR_READS 128
+#define MAX_N_SECTOR_READS 1024
 #define MAX_PQ_CHUNKS 256
 
 #define FULL_PRECISION_REORDER_MULTIPLIER 3
@@ -39,7 +47,7 @@
 // config for bqann
 #define MAX_WORKER_THREAD 64
 #define SEARCH_QUERY 10000
-#define MAX_COROUTINE 16
+#define MAX_COROUTINE 4
 // max used in io part, it's enough
 #define MAX_IO_RING_NUM 64
 
@@ -47,6 +55,10 @@
 #define CORO_FINAL_NO(thread_id,coro_id) (thread_id * MAX_COROUTINE + coro_id)
 
 #define TO_RING_ID(thread_id,coro_id) thread_id%MAX_IO_RING_NUM
+
+
+// #define DEBUG_LOG true
+#define DEBUG_LOG false
 
 
 namespace diskann {
@@ -118,6 +130,13 @@ namespace diskann {
     int                     coro_idx{-1};
   };
 
+  struct QueryIO{
+    std::vector<AlignedRead> aligned_read_vec;
+    int thread_id;
+    int coro_id;
+    bool valid = false;
+  };
+
   template<typename T>
   struct ThreadData {
     QueryScratch<T> scratch;
@@ -139,6 +158,7 @@ namespace diskann {
    public:
     DISKANN_DLLEXPORT PQFlashIndex(
         std::shared_ptr<AlignedFileReader> &fileReader,
+        std::shared_ptr< ssdps::SpdkWrapper> &spdkReader,
         const bool use_page_search,
         diskann::Metric                     metric = diskann::Metric::L2, bool use_sq = false);
     DISKANN_DLLEXPORT ~PQFlashIndex();
@@ -152,6 +172,10 @@ namespace diskann {
 
     void set_query_aligned_dim(int query_aligned_dim_in) {
       this->query_aligned_dim = query_aligned_dim_in;
+    }
+    void load_search_params(diskann::SearchParams& params){
+      this->use_bq_search_ = params.use_coro;
+      return;
     }
 
     io_uring* get_iouring(){return &ring_;}
@@ -167,13 +191,53 @@ namespace diskann {
 
     int get_index_fd(){return index_fd_;}
 
+    void set_handle(int thread_id, int coro_id,cppcoro::coroutine_handle<> handle)
+    {
+      this->handles_map[thread_id][coro_id] = handle;
+    }
+
+    int batch_push(std::vector<AlignedRead>& alignedread_vec,int thread_id){
+      // return this->batch_read_queue.batch_push(alignedread_vec);
+      // return this->batch_read_queue_thread[thread_id]->batch_push(alignedread_vec);
+      int cnt = 0;
+      
+      for(auto item : alignedread_vec){
+        this->batch_read_queue_thread[thread_id]->push(item);
+        // item.print();
+        // this->q[thread_id]->enqueue(&item);
+        if(DEBUG_LOG){
+          std::cout<<"[Worker Thread]in batch push";      
+          item.print();
+        }
+        cnt++;
+      }
+      return cnt;
+    }
+
     void register_io(int thread_id, int coro_id, int cnt) {
-      // std::unique_lock<std::mutex> lk(coro_io_queue_mutex);
+      std::unique_lock<std::mutex> lk(coro_io_queue_mutex);
       // int idx = CORO_FINAL_NO(thread_id,coro_id);
       n_io_executing[thread_id][coro_id] = cnt;
-      io_state[thread_id][coro_id] = IORequestState::WaitingForIO;
+      // atomic_mark[thread_id*max_ncoroutines+coro_id] = 0;
+      // atomic_mark[thread_id*max_ncoroutines+coro_id] = 1;
+      // io_state[thread_id][coro_id] = IORequestState::WaitingForIO;
       // n_io_completed[CORO_FINAL_NO(thread_id,coro_id)] = 0;
-      // lk.unlock();
+      lk.unlock();
+    }
+
+    int libaio_submit(std::vector<AlignedRead>& read_reqs, int thread_id, int coro_id){
+      int submit_num = read_reqs.size();
+      query_io_per_coro[thread_id][coro_id].aligned_read_vec.clear();
+      query_io_per_coro[thread_id][coro_id].aligned_read_vec = read_reqs;
+      // std::cout<<&read_reqs<<" new: "<<&query_io_per_coro[thread_id][coro_id].aligned_read_vec<<std::endl;
+      query_io_per_coro[thread_id][coro_id].thread_id = thread_id;
+      query_io_per_coro[thread_id][coro_id].coro_id = coro_id;
+      libaio_cnt[thread_id][coro_id] = submit_num;
+      query_io_per_coro[thread_id][coro_id].valid = true;
+      // int sub_num = reader->submit_reqs(read_reqs,ctx_vec[thread_id][coro_id]);
+      // reader->get_events(ctx_vec[thread_id][coro_id],
+      //   sub_num);
+      return submit_num;
     }
 
 #ifdef EXEC_ENV_OLS
@@ -275,6 +339,10 @@ namespace diskann {
                                         const _u64 beam_width,
                                         const _u32  io_limit,
                                         QueryStats *stats = nullptr);
+    DISKANN_DLLEXPORT void pure_libaio_search(const T *query, const size_t _query_num,
+                                        const _u64 beam_width,
+                                        const _u32  io_limit,
+                                        QueryStats *stats = nullptr);
 
     void worker_thread(const T *query, const size_t _query_num,
                        const _u64 k_search, const _u32 mem_L,
@@ -286,7 +354,14 @@ namespace diskann {
     void pure_io_worker_thread(const T *query, const size_t _query_num,
                        const _u64 beam_width, const _u32 io_limit,
                        QueryStats *stats = nullptr, int thread_id = -1, ThreadStats* thread_stat = nullptr);
+    void pure_io_libaio_worker_thread(const T *query, const size_t _query_num,
+                       const _u64 beam_width, const _u32 io_limit,
+                       QueryStats *stats = nullptr, int thread_id = -1, ThreadStats* thread_stat = nullptr);
     void io_thread(int io_thread_id, ThreadStats *thread_stat = nullptr);
+    void issue_io_thread(int io_thread_id, ThreadStats *thread_stat = nullptr,int this_thread_idx = 0, int io_thread_num = 1);
+    void reap_io_thread(int io_thread_id, ThreadStats *thread_stat = nullptr);
+    void libaio_issue_io_thread(int io_thread_id, ThreadStats *thread_stat = nullptr,int this_thread_idx = 0, int io_thread_num = 1);
+    void libaio_reap_io_thread(int io_thread_id, ThreadStats *thread_stat = nullptr,int this_thread_idx = 0, int io_thread_num = 1);
 
     cppcoro::task<void> query_coro(const T *query, const size_t _query_num,
                        const _u64 k_search, const _u32 mem_L,
@@ -298,7 +373,7 @@ namespace diskann {
     cppcoro::task<void> pure_io_query_coro(const T *query, const size_t _query_num,
                        const _u64 beam_width, const _u32 io_limit,
                        QueryStats *stats = nullptr, int thread_id = -1, int coro_id = -1, BQANN::Countdown& countdown = BQANN::Countdown(0), ThreadStats* thread_stat = nullptr);
-    cppcoro::task<void> schduler_coro(int thread_id = -1,BQANN::Countdown& countdown = BQANN::Countdown(0), ThreadStats* thread_stat = nullptr);
+    cppcoro::task<void> scheduler_coro(int thread_id = -1,BQANN::Countdown& countdown = BQANN::Countdown(0), ThreadStats* thread_stat = nullptr);
 
     DISKANN_DLLEXPORT _u32 range_search_iter_knn(const T *query1, const double range,
                                         const _u32          mem_L,
@@ -338,6 +413,8 @@ namespace diskann {
                                      QueryStats *        stats = nullptr);
 
     std::shared_ptr<AlignedFileReader> &reader;
+
+    std::shared_ptr< ssdps::SpdkWrapper> &spdk_reader;
 
    protected:
     DISKANN_DLLEXPORT void use_medoids_data_as_centroids();
@@ -430,6 +507,12 @@ namespace diskann {
     _u64                             reoreder_data_offset = 0;
 
 
+    std::vector<std::vector<IOContext>> ctx_vec;
+    std::vector<std::vector<int>> libaio_cnt;
+
+    std::vector<std::vector<QueryIO>> query_io_per_coro;
+
+
 
     int next_qid = 0;
     std::mutex mtx_nextq;
@@ -437,7 +520,15 @@ namespace diskann {
     // [length = thread_num* MAX_CORO_NUM]
     std::vector<std::vector<int>> n_io_executing;
     std::vector<std::vector<int>> n_io_completed;
+    ConcurrentQueue<AlignedRead>  batch_read_queue;
+
+    std::vector<ConcurrentQueue<AlignedRead> *> batch_read_queue_thread;
+    std::vector<moodycamel::ConcurrentQueue<AlignedRead*> *> q;
+    
+
     std::vector<std::vector<IORequestState>> io_state;
+    // std::vector<std::vector<std::atomic<int>>> atomic_mark(MAX_WORKER_THREAD,std::vector<std::atomic<int>>(MAX_WORKER_THREAD));
+    std::array<std::atomic<int>,MAX_WORKER_THREAD*64> atomic_mark;
     std::vector<ConcurrentQueue<int>*> thread_complete_io_queue;
     // std::vector<std::mutex> coro_io_queue_mutexes;
     std::mutex coro_io_queue_mutex;
@@ -448,7 +539,7 @@ namespace diskann {
     std::mutex rings_mutex_[MAX_IO_RING_NUM];
     int index_fd_;
 
-    int executing_thread_num = 0;
+    std::atomic<int> executing_thread_num = 0;
     std::mutex mtx;
 
     std::vector<std::vector<cppcoro::coroutine_handle<>>> handles_map;
@@ -466,6 +557,7 @@ namespace diskann {
     bool use_bq_search_ = false;
     _u64 worker_nthreads;
     _u64 io_nthreads;
+    _u64 coro_per_thread_;
 
     // affinity prefetch
     // bool use_affinity_ = true;
@@ -475,6 +567,7 @@ namespace diskann {
 
 
     // 是否打印详细输出 注意 可能会造成线程间输出混乱
+    // bool verbose_ = true;
     bool verbose_ = false;
 
     bool use_sq_ = false;
@@ -546,4 +639,85 @@ namespace diskann {
     CoroIOIssueData             ext_data_;
     ThreadStats* thread_stat_;
   };
+
+  template<typename T>
+  class NewIORegisterAwaiter {
+   public:
+    NewIORegisterAwaiter(PQFlashIndex<T>          *index,
+                      std::vector<AlignedRead> &aligned_read_vec, int thread_id,
+                      int coro_id,ThreadStats* thread_stat = nullptr) noexcept
+        : pq_flash_index_(index), aligned_read_vec_(aligned_read_vec),thread_stat_(thread_stat) {
+          // std::cout << "Thread id:"<<thread_id<<", coro id:"<<coro_id<< std::endl;
+      this->ext_data_.coro_idx = coro_id;
+      this->ext_data_.thread_id = thread_id;
+    }
+
+    bool await_ready() const noexcept {
+      return false;
+    }
+
+    void await_suspend(cppcoro::coroutine_handle<> handle);
+
+    __s32 await_resume() const noexcept {
+      return result_;
+    }
+
+    void SetResult(__s32 result) noexcept {
+      result_ = result;
+    }
+
+    cppcoro::coroutine_handle<> GetHandle() const noexcept {
+      return handle_;
+    }
+
+   private:
+    PQFlashIndex<T>            *pq_flash_index_;
+    cppcoro::coroutine_handle<> handle_;
+    std::vector<AlignedRead>    aligned_read_vec_;
+    int                         fd_;
+    __s32                       result_;
+    CoroIOIssueData             ext_data_;
+    ThreadStats* thread_stat_;
+  };
+
+  template<typename T>
+  class LibaioIORegisterAwaiter {
+   public:
+   LibaioIORegisterAwaiter(PQFlashIndex<T>          *index,
+                      std::vector<AlignedRead> &aligned_read_vec, int thread_id,
+                      int coro_id,ThreadStats* thread_stat = nullptr) noexcept
+        : pq_flash_index_(index), aligned_read_vec_(aligned_read_vec),thread_stat_(thread_stat) {
+          // std::cout << "Thread id:"<<thread_id<<", coro id:"<<coro_id<< std::endl;
+      this->ext_data_.coro_idx = coro_id;
+      this->ext_data_.thread_id = thread_id;
+    }
+
+    bool await_ready() const noexcept {
+      return false;
+    }
+
+    void await_suspend(cppcoro::coroutine_handle<> handle);
+
+    __s32 await_resume() const noexcept {
+      return result_;
+    }
+
+    void SetResult(__s32 result) noexcept {
+      result_ = result;
+    }
+
+    cppcoro::coroutine_handle<> GetHandle() const noexcept {
+      return handle_;
+    }
+
+   private:
+    PQFlashIndex<T>            *pq_flash_index_;
+    cppcoro::coroutine_handle<> handle_;
+    std::vector<AlignedRead>    aligned_read_vec_;
+    int                         fd_;
+    __s32                       result_;
+    CoroIOIssueData             ext_data_;
+    ThreadStats* thread_stat_;
+  };
 }  // namespace diskann
+#endif // PQ_FLASH_INDEX_H
