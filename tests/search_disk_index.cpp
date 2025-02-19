@@ -61,8 +61,10 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
   auto meta_pair = diskann::get_disk_index_meta(indexname);
   _u64 actual_index_size = get_file_size(indexname);
   _u64 expected_file_size, expected_npts;
-  _u64                               _nd;
   _u64                               max_node_len;
+
+  std::cout<<"Copy index file: "<<indexname<<" to spdk."<<std::endl;
+
   if (meta_pair.first) {
       // new version
       expected_file_size = meta_pair.second.back();
@@ -78,26 +80,19 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
                   << " with meta-data size: " << expected_file_size << std::endl;
     exit(-1);
   }
-  if (expected_npts != _nd) {
-    diskann::cout << "expect _nd: " << _nd
-                  << " actual _nd: " << expected_npts << std::endl;
-    exit(-1);
-  }
   max_node_len = meta_pair.second[3];
   unsigned nnodes_per_sector = meta_pair.second[4];
   
-
-  
-  _u64 file_size = READ_SECTOR_LEN + READ_SECTOR_LEN * ((_nd + nnodes_per_sector - 1) / nnodes_per_sector);
-  std::cout << "size "<< file_size << std::endl;
+  _u64 file_size = READ_SECTOR_LEN + READ_SECTOR_LEN * ((expected_npts + nnodes_per_sector - 1) / nnodes_per_sector);
+  std::cout<<"file_size:  "<<file_size<<std::endl;
   std::unique_ptr<char[]> mem_index =
       std::make_unique<char[]>(file_size);
   std::ifstream diskann_reader(indexname);
   diskann_reader.read(mem_index.get(),file_size);
 
   unsigned batch_size = 1024;
-  unsigned sector_size = ((_nd + nnodes_per_sector - 1) / nnodes_per_sector) + 1;
-
+  unsigned sector_size = ((expected_npts + nnodes_per_sector - 1) / nnodes_per_sector) + 1;
+  std::cout<<"sector_size:  "<<sector_size<<std::endl;
   unsigned wrt_idx = 0;
 
   char *buf_2 = (char *)spdk_zmalloc(READ_SECTOR_LEN* batch_size, READ_SECTOR_LEN, NULL,
@@ -106,12 +101,27 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
   while(wrt_idx<sector_size){
     unsigned wrt_size_iter = std::min(sector_size - wrt_idx , batch_size);
     memcpy(buf_2,mem_index.get()+wrt_idx*READ_SECTOR_LEN,wrt_size_iter*READ_SECTOR_LEN);
+    int res = memcmp(buf_2,mem_index.get()+wrt_idx*READ_SECTOR_LEN,wrt_size_iter*READ_SECTOR_LEN);
+    if(res!=0){
+      std::cout<<res<<" "<<wrt_idx<<std::endl;
+    }
     reader->SyncWrite(buf_2,wrt_size_iter*READ_SECTOR_LEN,wrt_idx,0);
     wrt_idx += wrt_size_iter;
   }
+  std::cout<<"Correction check."<<std::endl;
+  wrt_idx = 0;
+  while(wrt_idx<sector_size){
+    unsigned wrt_size_iter = std::min(sector_size - wrt_idx , batch_size);
+    reader->SyncRead(buf_2,wrt_size_iter*READ_SECTOR_LEN,wrt_idx,0);
+    int res = memcmp(buf_2,mem_index.get()+wrt_idx*READ_SECTOR_LEN,wrt_size_iter*READ_SECTOR_LEN);
+    if(res!=0){
+      std::cout<<res<<" "<<wrt_idx<<std::endl;
+    }
+    wrt_idx += wrt_size_iter;
+  }
 
-
-
+  spdk_free(buf_2);
+  std::cout<<"Done."<<std::endl;
 }
 
 template<typename T>
@@ -189,6 +199,7 @@ int search_disk_index(
 
   std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = ssdps::SpdkWrapper::create(1);
   spdk_reader->Init();
+  // writeIndexToSPDK(disk_file_path,spdk_reader.get());
 
   if(use_sq && !std::is_same<T, float>::value){
     std::cout << "erro, only support float sq" << std::endl;

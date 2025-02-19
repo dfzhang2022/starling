@@ -21,7 +21,7 @@ private:
     
     int rc;
     spdk_env_opts_init(&opts_);
-    opts_.opts_size = 10;
+    opts_.opts_size = 1024;
     opts_.name = "hello_world";
     // assert(spdk_env_init(&opts_) != 0), "Unable to initialize SPDK env\n";
     spdk_env_init(&opts_);
@@ -40,7 +40,7 @@ private:
     spdk_nvme_probe(
                  &g_trid_, this, SpdkWrapperImplementation::ProbeCallBack,
                  SpdkWrapperImplementation::AttachCallBack, nullptr);
-    std::cout<<"g_trid_:"<<g_trid_.traddr<<std::endl;
+    // std::cout<<"g_trid_:"<<g_trid_.traddr<<std::endl;
 
     assert(g_controllers_.size()!= 0) ;
     assert(g_namespaces_.size()== 1), "KISS, now only support 1 namespace";
@@ -52,11 +52,11 @@ private:
 
         // CHECK_NE(ns_entry.qpair[i], nullptr)
         //     << "ERROR: spdk_nvme_ctrlr_alloc_io_qpair() failed";
-        if(ns_entry.qpair[i] == nullptr){
-          std::cout<<"nullptr"<<std::endl;
-        }else{
-          std::cout<<"not nullptr"<<std::endl;
-        }
+        // if(ns_entry.qpair[i] == nullptr){
+        //   std::cout<<"nullptr"<<std::endl;
+        // }else{
+        //   std::cout<<"not nullptr"<<std::endl;
+        // }
       }
     }
     
@@ -169,6 +169,17 @@ private:
       PollCompleteQueue(qp_id);
     }
   }
+  void BatchSyncRead(std::vector<AlignedRead>& read_vec, int qp_id) override {
+    std::atomic_bool all_io_finish_flag{false};
+    size_t io_size = read_vec.size();
+
+    std::atomic<int> counter{0};
+    for (size_t i = 0; i < read_vec.size(); i++) {
+      SubmitReadCommand(read_vec[i].buf, read_vec[i].len, read_vec[i].block_id,
+                        BatchSyncCommandCompleteCB, &counter, 0);
+    }
+    while (counter != (int)io_size) PollCompleteQueue(qp_id);
+  }
 
   void SyncWrite(const void *pinned_src, const int64_t bytes,
                  const int64_t lba, int qp_id) override {
@@ -225,6 +236,14 @@ private:
     }
     std::atomic_bool *p = (std::atomic_bool *)ctx;
     *p = true;
+  }
+  static void BatchSyncCommandCompleteCB(void *ctx, const struct spdk_nvme_cpl *cpl) {
+    if ((spdk_nvme_cpl_is_error(cpl))) {
+      std::cout << "I/O error status: "
+                 << spdk_nvme_cpl_get_status_string(&cpl->status);
+    }
+    std::atomic<int> *p = (std::atomic<int> *)ctx;
+    p->fetch_add(1);
   }
 
   // static void CmdCallBack(void *ctx, const struct spdk_nvme_cpl *cpl) {
@@ -298,7 +317,7 @@ private:
   }
   spdk_env_opts opts_;
   spdk_nvme_transport_id g_trid_ = {};
-  const int kLBASize_ = 4096;
+  const int kLBASize_ = LBA_SIZE;
   std::unordered_map<std::string, spdk_nvme_ctrlr *> g_controllers_;
 
   struct ns_entry {

@@ -233,6 +233,7 @@ namespace diskann {
       query_io_per_coro[thread_id][coro_id].thread_id = thread_id;
       query_io_per_coro[thread_id][coro_id].coro_id = coro_id;
       libaio_cnt[thread_id][coro_id] = submit_num;
+      atomic_mark[thread_id*max_ncoroutines+coro_id]=0;
       query_io_per_coro[thread_id][coro_id].valid = true;
       // int sub_num = reader->submit_reqs(read_reqs,ctx_vec[thread_id][coro_id]);
       // reader->get_events(ctx_vec[thread_id][coro_id],

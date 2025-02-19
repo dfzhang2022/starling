@@ -1071,6 +1071,7 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
 
   unsigned batch_size = 1024;
   unsigned sector_size = ((expected_npts + nnodes_per_sector - 1) / nnodes_per_sector) + 1;
+  std::cout<<"sector_size:  "<<sector_size<<std::endl;
 
   unsigned wrt_idx = 0;
 
@@ -1080,15 +1081,19 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
   while(wrt_idx<sector_size){
     unsigned wrt_size_iter = std::min(sector_size - wrt_idx , batch_size);
     memcpy(buf_2,mem_index.get()+wrt_idx*READ_SECTOR_LEN,wrt_size_iter*READ_SECTOR_LEN);
+    int res = memcmp(buf_2,mem_index.get()+wrt_idx*READ_SECTOR_LEN,wrt_size_iter*READ_SECTOR_LEN);
+    if(res!=0){
+      std::cout<<res<<" "<<wrt_idx<<std::endl;
+    }
     reader->SyncWrite(buf_2,wrt_size_iter*READ_SECTOR_LEN,wrt_idx,0);
     wrt_idx += wrt_size_iter;
   }
   reader->SyncRead(buf_2,batch_size*READ_SECTOR_LEN,0,0);
-  int res = memcmp(buf_2,mem_index.get()+0*READ_SECTOR_LEN,50*READ_SECTOR_LEN);
+  int res = memcmp(buf_2,mem_index.get()+0*READ_SECTOR_LEN,batch_size*READ_SECTOR_LEN);
   std::cout<<res<<std::endl;
   std::cout<<wrt_idx<<std::endl;
 
-  // free(mem_index);
+  spdk_free(buf_2);
 
 
 }

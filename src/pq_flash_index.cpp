@@ -174,9 +174,11 @@ namespace diskann {
               ROUND_UP(sizeof(T) * MAX_N_CMPS * this->aligned_dim, 256);
           diskann::alloc_aligned((void **) &scratch.coord_scratch,
                                  coord_alloc_size, 256);
-          diskann::alloc_aligned((void **) &scratch.sector_scratch,
-                                 (_u64) MAX_N_SECTOR_READS * (_u64) SECTOR_LEN,
-                                 SECTOR_LEN);
+          // diskann::alloc_aligned((void **) &scratch.sector_scratch,
+          //                        (_u64) MAX_N_SECTOR_READS * (_u64) SECTOR_LEN,
+          //                        SECTOR_LEN);
+          scratch.sector_scratch = (char *)spdk_zmalloc(SECTOR_LEN * MAX_N_SECTOR_READS, SECTOR_LEN, NULL, SPDK_ENV_SOCKET_ID_ANY,
+          SPDK_MALLOC_DMA);
           diskann::alloc_aligned(
               (void **) &scratch.aligned_pq_coord_scratch,
               (_u64) MAX_GRAPH_DEGREE * (_u64) MAX_PQ_CHUNKS * sizeof(_u8),
@@ -342,7 +344,8 @@ namespace diskann {
         scratch = this->coro_data.pop();
       }
       diskann::aligned_free((void *) scratch.coord_scratch);
-      diskann::aligned_free((void *) scratch.sector_scratch);
+      // diskann::aligned_free((void *) scratch.sector_scratch);
+      spdk_free(scratch.sector_scratch);
       diskann::aligned_free((void *) scratch.aligned_pq_coord_scratch);
       diskann::aligned_free((void *) scratch.aligned_pqtable_dist_scratch);
       diskann::aligned_free((void *) scratch.aligned_dist_scratch);

@@ -8,9 +8,13 @@
 #include "spdk/string.h"
 #include "spdk/log.h"
 
+#include "aligned_file_reader.h"
+
 #include <string>
 #include <unordered_map>
 #include <memory>
+
+#define LBA_SIZE 4096
 
 namespace ssdps {
 
@@ -26,6 +30,8 @@ class SpdkWrapper {
                                  const int64_t lba, spdk_nvme_cmd_cb func, void *ctx, int qp_id) = 0;
 
   virtual void SyncRead(void *pinned_dst, const int64_t bytes, const int64_t lba, int qp_id) = 0;
+
+  virtual void BatchSyncRead(std::vector<AlignedRead>& read_vec, int qp_id) = 0;  
   
   virtual void SyncWrite(const void *pinned_src, const int64_t bytes,
                          const int64_t lba, int qp_id) = 0;
