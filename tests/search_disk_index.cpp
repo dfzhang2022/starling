@@ -197,8 +197,12 @@ int search_disk_index(
   reader.reset(new LinuxAlignedFileReader()); // Only Linux
 // #endif
 
-  std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = ssdps::SpdkWrapper::create(1);
-  spdk_reader->Init();
+  std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = nullptr;
+  if(use_coro){
+    spdk_reader = ssdps::SpdkWrapper::create(1);
+    spdk_reader->Init();
+  }
+  
   // writeIndexToSPDK(disk_file_path,spdk_reader.get());
 
   if(use_sq && !std::is_same<T, float>::value){

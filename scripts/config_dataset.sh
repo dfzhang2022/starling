@@ -35,9 +35,9 @@ my_dataset_bigann10M() {
 #   BIGANN100M   #
 ##################
 dataset_bigann100M() {
-  BASE_PATH=/data/dataset/bigann/learn.100M.u8bin
-  QUERY_FILE=/data/dataset/bigann/query.public.10K.u8bin
-  GT_FILE=/data/dataset/bigann/bigann-10M-gt.bin 
+  BASE_PATH=/data/dataset/BIGANN/learn.100M.u8bin
+  QUERY_FILE=/data/dataset/BIGANN/query.public.10K.u8bin
+  GT_FILE=/data/dataset/BIGANN/bigann-10M-gt.bin 
   PREFIX=bigann_100m
   DATA_TYPE=uint8
   DIST_FN=l2
@@ -52,16 +52,16 @@ dataset_bigann100M() {
 #   BIGANN1B   #
 ################
 dataset_bigann1B() {
-  BASE_PATH=/data/dataset/bigann/base.1B.u8bin 
-  QUERY_FILE=/data/dataset/bigann/query.public.10K.u8bin
-  GT_FILE=/data/dataset/bigann/bigann-10M-gt.bin 
+  BASE_PATH=/data/dataset/BIGANN/base.1B.u8bin 
+  QUERY_FILE=/data/dataset/BIGANN/query.public.10K.u8bin
+  GT_FILE=/data/dataset/BIGANN/bigann-1b-gt.bin 
   PREFIX=bigann_100m
   DATA_TYPE=uint8
   DIST_FN=l2
-  B=5
+  B=50
   K=100
   DATA_DIM=128
-  DATA_N=10000000
+  DATA_N=1000000000
 }
 
 

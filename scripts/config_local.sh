@@ -4,16 +4,17 @@ source config_dataset.sh
 # Choose the dataset by uncomment the line below
 # If multiple lines are uncommented, only the last dataset is effective
 # dataset_bigann10M
-# dataset_bigann100M
-dataset_deep10m
+dataset_bigann100M
+# dataset_bigann1B
+# dataset_deep10m
 
 ##################
 #   Disk Build   #
 ##################
 R=64
 BUILD_L=100
-M=32
-BUILD_T=8
+M=500
+BUILD_T=192
 
 ########################
 #   Disk Batch Build   #
@@ -63,14 +64,25 @@ GP_CUT=4096 # the graph's degree will been limited at 4096
 ##############
 #   Search   #
 ##############
-BM_LIST=(4)
-T_LIST=(8)
+BM_LIST=(8)
+T_LIST=(16)
 CACHE=0
 MEM_L=0 # non-zero to enable
 
 # Page Search
 USE_PAGE_SEARCH=1 # Set 0 for beam search, 1 for page search (default)
 PS_USE_RATIO=1.0
+
+
+USE_CORO=0
+PIPELINE=1
+
+PURE_IO=0
+
+QUERY_NUM=10000
+
+
+
 
 # KNN
 LS="100"

@@ -5,7 +5,7 @@ set -e
 
 source config_local.sh
 
-SOURCE_CODE_PATH=/home/cube/starling
+SOURCE_CODE_PATH=/home/user/dfzhang/starling
 
 INDICES_PATH=/data/dataset/indices
 
@@ -308,7 +308,7 @@ case $2 in
         do
           for T in ${T_LIST[@]}
           do
-            SEARCH_LOG=${INDEX_PREFIX_PATH}search/search_BW${BW}_T${T}_K${K}_CACHE${CACHE}_SQ${USE_SQ}_MEML${MEM_L}_MEMK${MEM_TOPK}_MEM_USE_FREQ${MEM_USE_FREQ}_PS${USE_PAGE_SEARCH}_CORO${USE_CORO}_USE_RATIO${PS_USE_RATIO}_GP_USE_FREQ${GP_USE_FREQ}_GP_LOCK_NUMS${GP_LOCK_NUMS}_GP_CUT${GP_CUT}.log
+            SEARCH_LOG=${INDEX_PREFIX_PATH}search/search_BW${BW}_T${T}_K${K}_PS${USE_PAGE_SEARCH}_CORO${USE_CORO}_USE_RATIO${PS_USE_RATIO}_PUREIO${PURE_IO}.log
             echo "Searching... log file: ${SEARCH_LOG}"
             # echo "${EXE_PATH}/tests/search_disk_index --data_type $DATA_TYPE \
             #   --dist_fn $DIST_FN \
@@ -328,8 +328,7 @@ case $2 in
             #   --disk_file_path ${DISK_FILE_PATH} \
             #   --use_sq ${USE_SQ}"
             sync; echo 3 | sudo tee /proc/sys/vm/drop_caches; 
-            # numactl --physcpubind=0-72 
-            ${EXE_PATH}/tests/search_disk_index --data_type $DATA_TYPE \
+            numactl --physcpubind=0-72 ${EXE_PATH}/tests/search_disk_index --data_type $DATA_TYPE \
               --dist_fn $DIST_FN \
               --index_path_prefix $INDEX_PREFIX_PATH \
               --query_file $QUERY_FILE \
@@ -347,7 +346,9 @@ case $2 in
               --use_pipeline ${PIPELINE} \
               --disk_file_path ${DISK_FILE_PATH} \
               --use_sq ${USE_SQ}     \
-              --use_coro ${USE_CORO}      > ${SEARCH_LOG} 
+              --use_coro ${USE_CORO}    \
+              --pure_io  ${PURE_IO}    \
+              --query_num ${QUERY_NUM}  > ${SEARCH_LOG} 
             log_arr+=( ${SEARCH_LOG} )
           done
         done
