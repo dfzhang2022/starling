@@ -27,6 +27,8 @@
 #include <array>
 #include <atomic>
 
+#include <glog/logging.h>
+
 std::vector<bool> check(10,false);
 std::vector<cppcoro::coroutine_handle<>> handle_map;
 
@@ -36,13 +38,15 @@ size_t final_coro_size = 2;
 
 #define QD	1024
 
-#define IO_NUM 1000000
+#define IO_NUM 10000000
 
 #define BEAMWIDTH 512
 
-#define SECTOR_LEN (_u64) 4096
+#define SECTOR_LEN (_u64) 512
 
-#define ISSUE_IO_NUM 1
+#define LBA_SIZE 512
+
+#define ISSUE_IO_NUM 4
 #define REAP_IO_NUM 1
 
 #define TEST_TIME 5
@@ -657,7 +661,7 @@ void libaio_thread_spdk(int thread_id , ssdps::SpdkWrapper* reader,diskann::Thre
     std::cerr << "Error binding thread to core " << thread_id << std::endl;
     exit(1);
   }
-  // std::cout << "[Issue io] IN"<< std::endl;
+  LOG(INFO) << "[SPDK Issue io] "<<thread_id;
   size_t         num_ios = 0;
   diskann::Timer all_timer, io_timer,sub_timer, wait_timer;
   float         io_time = 0, all_time = 0, wait_time = 0,io_submit_time = 0, io_getevents_time = 0;
@@ -666,7 +670,7 @@ void libaio_thread_spdk(int thread_id , ssdps::SpdkWrapper* reader,diskann::Thre
 
   // diskann::alloc_aligned((void**) &sector_scratch,
   //                        (_u64) QD * (_u64) SECTOR_LEN, SECTOR_LEN);
-  char *sector_scratch = (char *)spdk_zmalloc(0x1000 * QD, 0x1000, NULL, SPDK_ENV_SOCKET_ID_ANY,
+  char *sector_scratch = (char *)spdk_zmalloc(QD*SECTOR_LEN, LBA_SIZE, NULL, SPDK_ENV_SOCKET_ID_ANY,
                           SPDK_MALLOC_DMA);
   size_t sector_scratch_idx = 0;
   std::vector<float> io_submit_costs,io_getevents_costs;
@@ -678,19 +682,18 @@ void libaio_thread_spdk(int thread_id , ssdps::SpdkWrapper* reader,diskann::Thre
     io_timer.reset();
     sub_timer.reset();
     for (int i = 0; i < BEAMWIDTH; i++) {
-      int   block_id = 100 * thread_id + i * 100;
+      int   block_id =  i;
       char* tmp_buf = sector_scratch + sector_scratch_idx * SECTOR_LEN;
       sector_scratch_idx++;
       
-      
-      reader->SubmitReadCommand((void*) tmp_buf, 0x1000, block_id,
-                             cb, &counter, 0);
-       
+      block_id = block_id*(SECTOR_LEN/LBA_SIZE);
+      reader->SubmitReadCommand((void*) tmp_buf, block_id, i,
+                             cb, &counter, thread_id);
       num_ios++;
     }
     io_submit_time+= sub_timer.elapsed();
     wait_timer.reset();
-    while (counter != BEAMWIDTH) reader->PollCompleteQueue(0);
+    while (counter != BEAMWIDTH) reader->PollCompleteQueue(thread_id);
     stat->n_hops++;
     wait_time += wait_timer.elapsed();
     io_time += io_timer.elapsed();
@@ -927,7 +930,7 @@ float multithread_libaio_sync(float& io_latency, float & io_submit_latency, floa
 float multithread_libaio_spdk(float& io_latency, float & io_submit_latency, float & io_getevents_latency){
   
   auto thread_stats = new diskann::ThreadStats[ISSUE_IO_NUM];
-  std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = ssdps::SpdkWrapper::create(1);
+  std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = ssdps::SpdkWrapper::create(4);
   spdk_reader->Init();
 
   std::vector<std::thread> all_threads;
@@ -956,10 +959,10 @@ float multithread_libaio_spdk(float& io_latency, float & io_submit_latency, floa
     iops += num_io/all_time;
   }
   float res = io_time/all_n_hops;
-  std::cout<<"[LIBAIO] iops: "<<(int)iops<<std::endl;
-  std::cout<<"[LIBAIO] avg io_submit latency: "<<io_submit_time/all_n_hops<<std::endl;
-  std::cout<<"[LIBAIO] avg io_reap latency: "<<io_reap_time/all_n_hops<<std::endl;
-  std::cout<<"[LIBAIO] avg io latency: "<<io_time/all_n_hops<<std::endl;
+  LOG(INFO)<<"[LIBAIO] iops: "<<(int)iops<<std::endl;
+  LOG(INFO)<<"[LIBAIO] avg io_submit latency: "<<io_submit_time/all_n_hops<<std::endl;
+  LOG(INFO)<<"[LIBAIO] avg io_reap latency: "<<io_reap_time/all_n_hops<<std::endl;
+  LOG(INFO)<<"[LIBAIO] avg io latency: "<<io_time/all_n_hops<<std::endl;
 
   io_latency = io_time/all_n_hops;
   io_submit_latency = io_submit_time/all_n_hops;
@@ -981,7 +984,7 @@ void multithread_io_uring(){
     int ret = io_uring_queue_init(QD, ring_vec[cnt], 0);
     // int ret = io_uring_queue_init(QD, ring_vec[cnt], IORING_SETUP_KERNEL_POOL);
     if (ret < 0) {
-      std::cout<<"io_uring init failed at "<<cnt<<std::endl;
+      LOG(INFO)<<"io_uring init failed at "<<cnt<<std::endl;
       
     }
     cnt++;
@@ -1017,7 +1020,7 @@ void multithread_io_uring(){
     all_time=thread_stats[i].total_us / (1000*1000);
     iops += num_io/all_time;
   }
-  std::cout<<"[IO_URING] iops: "<<(int)iops<<std::endl;
+  LOG(INFO)<<"[IO_URING] iops: "<<(int)iops<<std::endl;
 
   close(all_fd);
 	cnt =0;
@@ -1063,7 +1066,7 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
   //   exit(-1);
   // }
   _u64 file_size = READ_SECTOR_LEN + READ_SECTOR_LEN * ((expected_npts + nnodes_per_sector - 1) / nnodes_per_sector);
-  std::cout<<"file_size:  "<<file_size<<std::endl;
+  LOG(INFO)<<"file_size:  "<<file_size<<std::endl;
   std::unique_ptr<char[]> mem_index =
       std::make_unique<char[]>(file_size);
   std::ifstream diskann_reader(indexname);
@@ -1071,7 +1074,7 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
 
   unsigned batch_size = 1024;
   unsigned sector_size = ((expected_npts + nnodes_per_sector - 1) / nnodes_per_sector) + 1;
-  std::cout<<"sector_size:  "<<sector_size<<std::endl;
+  LOG(INFO)<<"sector_size:  "<<sector_size<<std::endl;
 
   unsigned wrt_idx = 0;
 
@@ -1083,22 +1086,29 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
     memcpy(buf_2,mem_index.get()+wrt_idx*READ_SECTOR_LEN,wrt_size_iter*READ_SECTOR_LEN);
     int res = memcmp(buf_2,mem_index.get()+wrt_idx*READ_SECTOR_LEN,wrt_size_iter*READ_SECTOR_LEN);
     if(res!=0){
-      std::cout<<res<<" "<<wrt_idx<<std::endl;
+      LOG(INFO)<<res<<" "<<wrt_idx<<std::endl;
     }
     reader->SyncWrite(buf_2,wrt_size_iter*READ_SECTOR_LEN,wrt_idx,0);
     wrt_idx += wrt_size_iter;
   }
   reader->SyncRead(buf_2,batch_size*READ_SECTOR_LEN,0,0);
   int res = memcmp(buf_2,mem_index.get()+0*READ_SECTOR_LEN,batch_size*READ_SECTOR_LEN);
-  std::cout<<res<<std::endl;
-  std::cout<<wrt_idx<<std::endl;
+  LOG(INFO)<<res<<std::endl;
+  LOG(INFO)<<wrt_idx<<std::endl;
 
   spdk_free(buf_2);
 
 
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+
+  google::InitGoogleLogging(argv[0]);
+  // FLAGS_log_dir = "./logs";
+  FLAGS_logtostderr = false;  // 不输出到标准错误流
+  FLAGS_alsologtostderr = true;
+  FLAGS_minloglevel = 0;  // 0: INFO, 1: WARNING, 2: ERROR, 3: FATAL
+
   // int                              coro_size = 4;
   // std::vector<cppcoro::task<void>> tasks;
   // handle_map.reserve(coro_size);
@@ -1131,12 +1141,15 @@ int main() {
   // std::cout<<"Final reap avg: "<<reap_time/TEST_TIME<< " for "<<BEAMWIDTH<<std::endl;
   // std::cout<<io_time/TEST_TIME<<" "<<submit_time/TEST_TIME<<" "<<reap_time/TEST_TIME<<std::endl;
 
-  std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = ssdps::SpdkWrapper::create(1);
-  spdk_reader->Init();
+  // std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = ssdps::SpdkWrapper::create(1);
+  // spdk_reader->Init();
+  // char *sector_scratch = (char *)spdk_zmalloc(LBA_SIZE*QD, LBA_SIZE, NULL, SPDK_ENV_SOCKET_ID_ANY,
+  //   SPDK_MALLOC_DMA);
+  // spdk_reader->SyncRead(sector_scratch,LBA_SIZE,0,0);
 
-  // float a = 0,b = 0,c = 0;
-  // multithread_libaio_spdk(a,b,c);
-  writeIndexToSPDK("/data/dataset/indices/bigann_100m_M200_R64_L100_B5/_disk.index",spdk_reader.get());
+  float a = 0,b = 0,c = 0;
+  multithread_libaio_spdk(a,b,c);
+  // writeIndexToSPDK("/data/dataset/indices/bigann_100m_M200_R64_L100_B5/_disk.index",spdk_reader.get());
 
   return 0;
 }

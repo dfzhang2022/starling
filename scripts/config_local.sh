@@ -4,7 +4,8 @@ source config_dataset.sh
 # Choose the dataset by uncomment the line below
 # If multiple lines are uncommented, only the last dataset is effective
 # dataset_bigann10M
-dataset_bigann100M
+# dataset_bigann100M
+dataset_deep10m
 
 ##################
 #   Disk Build   #
@@ -12,7 +13,7 @@ dataset_bigann100M
 R=64
 BUILD_L=100
 M=32
-BUILD_T=144
+BUILD_T=8
 
 ########################
 #   Disk Batch Build   #

@@ -5,7 +5,7 @@ set -e
 
 source config_local.sh
 
-SOURCE_CODE_PATH=/home/dfzhang/starling
+SOURCE_CODE_PATH=/home/cube/starling
 
 INDICES_PATH=/data/dataset/indices
 
@@ -55,6 +55,10 @@ pwd
 
 date
 case $2 in
+  coro)
+    time ${EXE_PATH}/tests/test_cppcoro
+  ;;
+
   build)
     check_dir_and_make_if_absent ${INDEX_PREFIX_PATH}
     echo "Building disk index..."

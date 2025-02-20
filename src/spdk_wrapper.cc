@@ -4,8 +4,9 @@
 #include <iostream>
 #include <atomic>
 #include <vector>
+// #include <google/glog.h>
 
-const char *using_ssd = "0000:68:00.0";
+const char *using_ssd = "0000:02:00.0";
 
 namespace ssdps {
 
@@ -18,18 +19,21 @@ private:
 
   void Init() override {
     std::cout << "Initializing NVMe Controllers"<<std::endl;
-    
+
+    LOG(INFO)<<"SECTOR_LEN"<<SECTOR_LEN<<" and actual lba_size: "<<kLBASize_;
+    CHECK_EQ(SECTOR_LEN%kLBASize_,0);
+
     int rc;
     spdk_env_opts_init(&opts_);
     opts_.opts_size = 1024;
     opts_.name = "hello_world";
     // assert(spdk_env_init(&opts_) != 0), "Unable to initialize SPDK env\n";
-    spdk_env_init(&opts_);
-    // rc = spdk_env_init(&opts_);
-    // if (rc != 0) {
-    //   fprintf(stderr, "Unable to initialize SPDK env\n");
-    //   return ;
-    // }
+    // spdk_env_init(&opts_);
+    rc = spdk_env_init(&opts_);
+    if (rc != 0) {
+      fprintf(stderr, "Unable to initialize SPDK env\n");
+      return ;
+    }
 
     spdk_nvme_trid_populate_transport(&g_trid_, SPDK_NVME_TRANSPORT_PCIE);
     snprintf(g_trid_.subnqn, sizeof(g_trid_.subnqn), "%s",
@@ -43,20 +47,16 @@ private:
     // std::cout<<"g_trid_:"<<g_trid_.traddr<<std::endl;
 
     assert(g_controllers_.size()!= 0) ;
-    assert(g_namespaces_.size()== 1), "KISS, now only support 1 namespace";
+    // assert(g_namespaces_.size()== 1), "KISS, now only support 1 namespace";
+    LOG(INFO)<<"g_namespaces_.size():"<<g_namespaces_.size();
     std::cout << "Initialization complete"<<std::endl;
 
     for (auto &ns_entry : g_namespaces_) {
       for(int i = 0; i < queue_cnt; i++){
         ns_entry.qpair[i] = spdk_nvme_ctrlr_alloc_io_qpair(ns_entry.ctrlr, NULL, 0);
 
-        // CHECK_NE(ns_entry.qpair[i], nullptr)
-        //     << "ERROR: spdk_nvme_ctrlr_alloc_io_qpair() failed";
-        // if(ns_entry.qpair[i] == nullptr){
-        //   std::cout<<"nullptr"<<std::endl;
-        // }else{
-        //   std::cout<<"not nullptr"<<std::endl;
-        // }
+        CHECK_NE(ns_entry.qpair[i], nullptr)
+            << "ERROR: spdk_nvme_ctrlr_alloc_io_qpair() failed";
       }
     }
     
@@ -138,8 +138,8 @@ private:
         return;
       } else if (ret == -ENOMEM) {
         // FB_LOG_EVERY_MS(ERROR, 10000)
-        std::cout
-            << "SubmitReadCommand return with ENOMEM, let's poll CQ";
+        // std::cout
+        //     << "SubmitReadCommand return with ENOMEM, let's poll CQ";
         PollCompleteQueue(qp_id);
       } else {
         std::cout << "SubmitReadCommand Error " << ret;
@@ -161,6 +161,18 @@ private:
     return capacity / GetLBASize();
   }
 
+  void SyncRead4K(void *pinned_dst, const int64_t bytes,
+    const int64_t lba_4k, int qp_id)override{
+      std::atomic_bool flag{false};
+      CHECK_EQ(SECTOR_LEN%kLBASize_,0);
+      int64_t actual_lba = lba_4k*(this->SECTOR_LEN/this->kLBASize_);
+      SubmitReadCommand(pinned_dst, bytes, actual_lba, SyncCommandCompleteCB,
+                        (void *)&flag, qp_id);
+      while (!flag.load()) {
+        PollCompleteQueue(qp_id);
+      }
+    }
+
   void SyncRead(void *pinned_dst, const int64_t bytes, const int64_t lba, int qp_id) override {
     std::atomic_bool flag{false};
     SubmitReadCommand(pinned_dst, bytes, lba, SyncCommandCompleteCB,
@@ -180,6 +192,18 @@ private:
     }
     while (counter != (int)io_size) PollCompleteQueue(qp_id);
   }
+  void BatchSyncRead4K(std::vector<AlignedRead>& read_vec, int qp_id) override {
+    std::atomic_bool all_io_finish_flag{false};
+    size_t io_size = read_vec.size();
+    CHECK_EQ(SECTOR_LEN%kLBASize_,0);
+    std::atomic<int> counter{0};
+    for (size_t i = 0; i < read_vec.size(); i++) {
+      int64_t actual_lba = read_vec[i].block_id*(this->SECTOR_LEN/this->kLBASize_);
+      SubmitReadCommand(read_vec[i].buf, read_vec[i].len, actual_lba,
+                        BatchSyncCommandCompleteCB, &counter, 0);
+    }
+    while (counter != (int)io_size) PollCompleteQueue(qp_id);
+  }
 
   void SyncWrite(const void *pinned_src, const int64_t bytes,
                  const int64_t lba, int qp_id) override {
@@ -190,6 +214,18 @@ private:
       PollCompleteQueue(qp_id);
     }
   }
+  void SyncWrite4K(const void *pinned_src, const int64_t bytes,
+    const int64_t lba_4k, int qp_id)override {
+      std::atomic_bool flag{false};
+      CHECK_EQ(SECTOR_LEN%kLBASize_,0);
+      int64_t actual_lba = lba_4k*(this->SECTOR_LEN/this->kLBASize_);
+    SubmitWriteCommand(pinned_src, bytes, actual_lba, SyncCommandCompleteCB,
+                       (void *)&flag, qp_id);
+    while (!flag.load()) {
+      PollCompleteQueue(qp_id);
+    }
+
+    }
 
   void Sync2Read(void *pinned_dst, const int64_t lba, int qp_id) override {
     std::cout
@@ -258,7 +294,6 @@ private:
   static bool ProbeCallBack(void *cb_ctx,
                             const struct spdk_nvme_transport_id *trid,
                             struct spdk_nvme_ctrlr_opts *opts) {
-                              std::cout<<"sdsd"<<trid->traddr<<std::endl;
     if(strcmp(using_ssd, trid->traddr) != 0){
       return false;
     }
@@ -271,7 +306,6 @@ private:
                              struct spdk_nvme_ctrlr *ctrlr,
                              const struct spdk_nvme_ctrlr_opts *opts) {
     SpdkWrapperImplementation *ptr = (SpdkWrapperImplementation *)(cb_ctx);
-    std::cout<<"in Attach"<<std::endl;
 
     /*
      * spdk_nvme_ctrlr is the logical abstraction in SPDK for an NVMe
@@ -310,14 +344,13 @@ private:
 
       ptr->g_namespaces_.push_back(entry);
 
-      // std::cout << folly::format("Namespace ID: {} size: {} GB\n",
-      //                            spdk_nvme_ns_get_id(ns),
-      //                            spdk_nvme_ns_get_size(ns) / 1000000000);
+      LOG(INFO)<<"Namespace ID: "<<spdk_nvme_ns_get_id(ns)<<" size: "<<spdk_nvme_ns_get_size(ns) / 1000000000<<" GB";
     }
   }
   spdk_env_opts opts_;
   spdk_nvme_transport_id g_trid_ = {};
-  const int kLBASize_ = LBA_SIZE;
+  const int SECTOR_LEN = SPDK_SECTOR_LEN;
+  const int kLBASize_ = LBA_SIZE;  
   std::unordered_map<std::string, spdk_nvme_ctrlr *> g_controllers_;
 
   struct ns_entry {

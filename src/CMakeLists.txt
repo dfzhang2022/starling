@@ -36,7 +36,7 @@ else()
     target_link_options(${PROJECT_NAME} INTERFACE -Wl,--whole-archive -Wl,--no-as-needed)
     target_link_options(${PROJECT_NAME} INTERFACE ${SPDK_LIB} ${DPDK_LIB})
     target_link_options(${PROJECT_NAME} INTERFACE -Wl,--no-whole-archive)
-    target_link_options(${PROJECT_NAME} INTERFACE -lnuma -ldl -L${SPDK_POS}/isa-l/.libs -lisal -pthread -lrt -luuid -lcrypto -lm -laio -lglog -lgflags -ldouble-conversion -lunwind -lfmt)
+    target_link_options(${PROJECT_NAME} INTERFACE -lnuma -ldl -L${SPDK_POS}/isa-l/.libs -lisal -pthread -lrt -luuid -lcrypto -lm -laio -lglog -lgflags -ldouble-conversion -lunwind )
     target_link_libraries(${PROJECT_NAME} PRIVATE uring cppcoro)
     # target_link_libraries(${PROJECT_NAME}_s PRIVATE uring cppcoro)
 

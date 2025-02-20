@@ -80,3 +80,20 @@ dataset_350M() {
   B=16
   K=100
 }
+
+
+####################
+#     DEEP10M      #
+####################
+
+
+dataset_deep10m() {
+  BASE_PATH=/data/dataset/DEEP1B/base.10M.fbin
+  QUERY_FILE=/data/dataset/DEEP1B/query.public.10K.fbin
+  GT_FILE=/data/dataset/DEEP1B/deep-10k-gt.fbin 
+  PREFIX=deep_10m
+  DATA_TYPE=float
+  DIST_FN=l2
+  B=16
+  K=10
+}

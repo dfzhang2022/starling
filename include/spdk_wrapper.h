@@ -14,7 +14,10 @@
 #include <unordered_map>
 #include <memory>
 
-#define LBA_SIZE 4096
+#include <glog/logging.h>
+
+#define SPDK_SECTOR_LEN 512
+#define LBA_SIZE 512
 
 namespace ssdps {
 
@@ -31,10 +34,18 @@ class SpdkWrapper {
 
   virtual void SyncRead(void *pinned_dst, const int64_t bytes, const int64_t lba, int qp_id) = 0;
 
-  virtual void BatchSyncRead(std::vector<AlignedRead>& read_vec, int qp_id) = 0;  
-  
+  virtual void BatchSyncRead(std::vector<AlignedRead> &read_vec, int qp_id) = 0;
+
   virtual void SyncWrite(const void *pinned_src, const int64_t bytes,
                          const int64_t lba, int qp_id) = 0;
+
+  virtual void SyncRead4K(void *pinned_dst, const int64_t bytes,
+                        const int64_t lba_4k, int qp_id) = 0;
+
+  virtual void BatchSyncRead4K(std::vector<AlignedRead> &read_vec, int qp_id) = 0;
+
+  virtual void SyncWrite4K(const void *pinned_src, const int64_t bytes,
+                         const int64_t lba_4k, int qp_id) = 0;
 
   virtual void Sync2Read(void *pinned_dst, const int64_t lba, int qp_id) = 0;
 
