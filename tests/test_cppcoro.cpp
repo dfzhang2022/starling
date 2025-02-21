@@ -1102,7 +1102,7 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
     if(res!=0){
       LOG(INFO)<<res<<" "<<wrt_idx<<std::endl;
     }
-    reader->SyncWrite(buf_2,wrt_size_iter*READ_SECTOR_LEN,wrt_idx,0);
+    reader->SyncWrite4K(buf_2,wrt_size_iter*READ_SECTOR_LEN,wrt_idx,0);
     wrt_idx += wrt_size_iter;
   }
 

@@ -9,6 +9,7 @@
 
 #include "file.h"
 #include "io_uring.h"
+#include "overlap_utils.h"
 
 namespace diskann {
   void cb(void *ctx, const struct spdk_nvme_cpl *cpl) {
@@ -49,16 +50,24 @@ namespace diskann {
   
     // Iterate over all AlignedRead elements and count the occurrences of block_id
     for (const auto& read : reads) {
+      if(blockIdCount.find(read.block_id)==blockIdCount.end()){
+        blockIdCount[read.block_id] = 1;
+      }else{
         blockIdCount[read.block_id]++;
+      }
     }
   
     // Get the total number of reads
     size_t totalReads = reads.size();
     if (totalReads == 0) {
-        std::cout << "No reads to process." << std::endl;
+        // std::cout << "No reads to process." << std::endl;
         return 0;
     }
+
     size_t diffReadNum = blockIdCount.size();
+    if(diffReadNum<totalReads){
+      std::cout << "map#"<<diffReadNum<<" ,totalReads: "<<totalReads << std::endl;
+    }
   
     // Output the count and repetition rate for each block_id
     // for (const auto& entry : blockIdCount) {
@@ -284,8 +293,8 @@ namespace diskann {
         countdown.Decrement();
         co_return;
       }
-      if(q_id%1000 == 0)
-      std::cout<<"Executing Q#"<<q_id<<", "<<thread_id<<", "<<coro_id<<std::endl;
+      // if(q_id%1000 == 0)
+      // std::cout<<"Executing Q#"<<q_id<<", "<<thread_id<<", "<<coro_id<<std::endl;
 
 
     
@@ -1474,7 +1483,7 @@ namespace diskann {
     this->executing_thread_num = this->max_nthreads;
     // lk.unlock();
     std::vector<std::thread> all_threads;
-    size_t n_io_thread_num = 1;
+    // size_t n_io_thread_num = 1;
     size_t issue_io_thread_num = 1;
     size_t reap_io_thread_num = 0;
 
@@ -2097,37 +2106,43 @@ template<typename T>
           break;
         }
         std::vector<AlignedRead> collections;
-        collections.reserve(512);
+        // collections.reserve(512);
         std::vector<std::pair<int,int>> collect_coro_id;
         
-        io_timer.reset();
-        wait_timer.reset();
         for (size_t thread_idx = this_thread_idx; thread_idx < max_nthreads; thread_idx+=io_thread_num) {
           for (size_t coro_idx = 0; coro_idx < max_ncoroutines; coro_idx++) {
             if (query_io_per_coro[thread_idx][coro_idx].valid) {
+              io_timer.reset();
               query_io_per_coro[thread_idx][coro_idx].valid = false;
               for(auto item: query_io_per_coro[thread_idx][coro_idx].aligned_read_vec){
                 collections.emplace_back(item);
               }
               collect_coro_id.emplace_back(thread_idx,coro_idx);
+              thread_stat->io_us += io_timer.elapsed();
             }
           }
         }
-        thread_stat->io_submit_us += wait_timer.elapsed();
-        wait_timer.reset();
-        spdk_reader->BatchSyncRead(collections, 0);
-        thread_stat->io_reap_us += wait_timer.elapsed();
-        thread_stat->io_us += io_timer.elapsed();
-        for(auto item : collect_coro_id){
-          int thread_idx = item.first;
-          int coro_idx = item.second;
-          atomic_mark[thread_idx * max_ncoroutines + coro_idx] = 1; // fetch atomic to resume worker coro.
-        }
-
         double replicatedRate = diskann::calculateBlockIdFrequency(collections);
         if (replicatedRate > 0) {
           LOG(INFO) << "Replicated Rate:" << replicatedRate;
         }
+        if (collections.size() > 0) {
+          std::cout << "collections.size() = " << collections.size()<<std::endl;
+          io_timer.reset();
+          wait_timer.reset();
+          spdk_reader->BatchSyncRead4K(collections, this_thread_idx);
+          for (auto item : collect_coro_id) {
+            int thread_idx = item.first;
+            int coro_idx = item.second;
+            atomic_mark[thread_idx * max_ncoroutines + coro_idx] =
+                1;  // fetch atomic to resume worker coro.
+          }
+          thread_stat->io_submit_us += wait_timer.elapsed();
+          thread_stat->io_reap_us += wait_timer.elapsed();
+          thread_stat->io_us += io_timer.elapsed();
+        }
+
+        
     }
     thread_stat->total_us += all_timer.elapsed();
     std::cout << "[SPDK Issue IO Thread]Exit." << std::endl;

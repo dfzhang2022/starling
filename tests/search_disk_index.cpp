@@ -10,6 +10,7 @@
 #include <string.h>
 #include <time.h>
 #include <boost/program_options.hpp>
+#include <gflags/gflags.h>
 
 #include "aux_utils.h"
 #include "index.h"
@@ -38,6 +39,9 @@
 
 #define READ_SECTOR_LEN (size_t) 4096
 
+DEFINE_string(log_path, "./logs", "Path to log file");
+DEFINE_int32(age, 0, "The age of the person");
+DEFINE_bool(is_student, false, "Whether the person is a student");
 
 
 namespace po = boost::program_options;

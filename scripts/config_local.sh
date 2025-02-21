@@ -70,11 +70,12 @@ MEM_L=0 # non-zero to enable
 
 # Page Search
 USE_PAGE_SEARCH=1 # Set 0 for beam search, 1 for page search (default)
-PS_USE_RATIO=1.0
-
-
-USE_CORO=0
 PIPELINE=1
+PS_USE_RATIO=0.3
+
+
+USE_CORO=1
+CORO_SIZE=16
 
 PURE_IO=0
 

@@ -308,7 +308,7 @@ case $2 in
         do
           for T in ${T_LIST[@]}
           do
-            SEARCH_LOG=${INDEX_PREFIX_PATH}search/search_BW${BW}_T${T}_K${K}_PS${USE_PAGE_SEARCH}_CORO${USE_CORO}_USE_RATIO${PS_USE_RATIO}_PUREIO${PURE_IO}.log
+            SEARCH_LOG=${INDEX_PREFIX_PATH}search/search_BW${BW}_T${T}_K${K}_PS${USE_PAGE_SEARCH}_PIPE${PIPELINE}_CORO${USE_CORO}_COROSZ${CORO_SIZE}_USE_RATIO${PS_USE_RATIO}_PUREIO${PURE_IO}.log
             echo "Searching... log file: ${SEARCH_LOG}"
             # echo "${EXE_PATH}/tests/search_disk_index --data_type $DATA_TYPE \
             #   --dist_fn $DIST_FN \
@@ -328,7 +328,8 @@ case $2 in
             #   --disk_file_path ${DISK_FILE_PATH} \
             #   --use_sq ${USE_SQ}"
             sync; echo 3 | sudo tee /proc/sys/vm/drop_caches; 
-            numactl --physcpubind=0-72 ${EXE_PATH}/tests/search_disk_index --data_type $DATA_TYPE \
+            # numactl --physcpubind=0-72 
+            ${EXE_PATH}/tests/search_disk_index --data_type $DATA_TYPE \
               --dist_fn $DIST_FN \
               --index_path_prefix $INDEX_PREFIX_PATH \
               --query_file $QUERY_FILE \
@@ -347,6 +348,7 @@ case $2 in
               --disk_file_path ${DISK_FILE_PATH} \
               --use_sq ${USE_SQ}     \
               --use_coro ${USE_CORO}    \
+              --coro_size ${CORO_SIZE} \
               --pure_io  ${PURE_IO}    \
               --query_num ${QUERY_NUM}  > ${SEARCH_LOG} 
             log_arr+=( ${SEARCH_LOG} )

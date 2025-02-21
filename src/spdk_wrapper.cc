@@ -182,11 +182,10 @@ private:
     }
   }
   void BatchSyncRead(std::vector<AlignedRead>& read_vec, int qp_id) override {
-    std::atomic_bool all_io_finish_flag{false};
     size_t io_size = read_vec.size();
 
-    std::atomic<int> counter{0};
-    for (size_t i = 0; i < read_vec.size(); i++) {
+    std::atomic<int> counter{io_size};
+    for (size_t i = 0; i < io_size; i++) {
       SubmitReadCommand(read_vec[i].buf, read_vec[i].len, read_vec[i].block_id,
                         BatchSyncCommandCompleteCB, &counter, 0);
     }

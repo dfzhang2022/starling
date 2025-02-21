@@ -261,7 +261,6 @@ namespace diskann {
       libaio_cnt[k].resize(max_ncoroutines);
       query_io_per_coro[k].resize(max_ncoroutines);
       for (size_t t =  0; t < max_ncoroutines; t++) {
-        std::cout<<t<<std::endl;
         this->ctx_vec[k][t] = 0;
         int ret = io_setup(64, &(ctx_vec[k][t]));
         if (ret != 0) {
@@ -271,9 +270,8 @@ namespace diskann {
                     << ":" << ::strerror(errno) << std::endl;
           return;
         } else {
-          diskann::cout<< " allocating ctx: " << ctx_vec[k][t]<< std::endl;
+          diskann::cout<< " allocating ctx: " << ctx_vec[k][t]<<" to "<<k<<", "<<t<< std::endl;
         }
-        // this->ctx_vec[k].emplace_back(a);
         libaio_cnt[k][t] = 0;
         atomic_mark[k*max_ncoroutines + t] = 2;
       }
