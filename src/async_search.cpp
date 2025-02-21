@@ -2057,61 +2057,49 @@ template<typename T>
     io_timer.reset();
     uint64_t num_issued = 0;
     
-    std::cout << "[spdk Issue IO Thread]Enter thread." << std::endl;
-    // char *sector_scratch = (char *)spdk_zmalloc(SECTOR_LEN * 1024, SECTOR_LEN, NULL, SPDK_ENV_SOCKET_ID_ANY,
-    //   SPDK_MALLOC_DMA);
-    // unsigned sector_idx = 0;
+    std::cout << "[SPDK Issue IO Thread]Enter thread." << std::endl;
 
     while(true){
-        _u64 executing_thread_num_now;
-        // std::unique_lock<std::mutex> lk(mtx);
-        executing_thread_num_now = this->executing_thread_num;
-        // lk.unlock();
-        if( (executing_thread_num_now == 0) ){
+        if( (this->executing_thread_num == 0) ){
           thread_stat->cpu_us += cpu_timer.elapsed();
           break;
         }
+        std::vector<AlignedRead> collections;
+        collections.reserve(512);
+        std::vector<std::pair<int,int>> collect_coro_id;
+        
+        io_timer.reset();
+        wait_timer.reset();
         for (size_t thread_idx = this_thread_idx; thread_idx < max_nthreads; thread_idx+=io_thread_num) {
           for (size_t coro_idx = 0; coro_idx < max_ncoroutines; coro_idx++) {
             if (query_io_per_coro[thread_idx][coro_idx].valid) {
-              // sector_idx = 0;
-              io_timer.reset();
               query_io_per_coro[thread_idx][coro_idx].valid = false;
-              int io_size = query_io_per_coro[thread_idx][coro_idx].aligned_read_vec.size();
-              std::atomic<int> counter{0};
-              // std::cout<<"counter:"<<counter<<std::endl;
-              wait_timer.reset();
-              // for(auto item: query_io_per_coro[thread_idx][coro_idx].aligned_read_vec){
-              //   // spdk_reader->SubmitReadCommand((void*) item.buf, item.len,item.block_id,
-              //   // cb, &atomic_mark[thread_idx*max_ncoroutines+coro_idx], 0);
-              //   spdk_reader->SubmitReadCommand((void*) item.buf, item.len,item.block_id,
-              //   cb, &counter, 0);
-              //   // spdk_reader->SyncRead((void*) item.buf, item.len,item.block_id,0);
-              //   // sector_idx++;
-              //   // counter++;
-              // }
-              // while (counter < io_size) spdk_reader->PollCompleteQueue(0);
-              spdk_reader->BatchSyncRead(query_io_per_coro[thread_idx][coro_idx].aligned_read_vec,0);
-              thread_stat->io_submit_us+=wait_timer.elapsed();
-              wait_timer.reset();
-              thread_stat->io_reap_us+=wait_timer.elapsed();
-              // for(size_t vec_idx = 0;vec_idx<io_size ;vec_idx++){
-              //   memcpy(query_io_per_coro[thread_idx][coro_idx].aligned_read_vec[vec_idx].buf,sector_scratch+vec_idx*SECTOR_LEN,SECTOR_LEN);
-              // }
-              
-              thread_stat->io_us += io_timer.elapsed();
-              // atomic_mark[thread_idx*max_ncoroutines+coro_idx]=io_size;
-              atomic_mark[thread_idx*max_ncoroutines+coro_idx]=1;
-              
+              for(auto item: query_io_per_coro[thread_idx][coro_idx].aligned_read_vec){
+                collections.emplace_back(item);
+              }
+              collect_coro_id.emplace_back({thread_idx,coro_idx});
+              int io_size = query_io_per_coro[thread_idx][coro_idx].aligned_read_vec.size();     
             }
           }
         }
-        
+        thread_stat->io_submit_us += wait_timer.elapsed();
+        wait_timer.reset();
+        spdk_reader->BatchSyncRead(collections, 0);
+        thread_stat->io_reap_us += wait_timer.elapsed();
+        thread_stat->io_us += io_timer.elapsed();
+        for(auto item : collect_coro_id){
+          thread_idx = item.first;
+          coro_idx = item.second;
+          atomic_mark[thread_idx * max_ncoroutines + coro_idx] = 1; // fetch atomic to resume worker coro.
+        }
+
+        double replicatedRate = calculateBlockIdFrequency(collections);
+        if (replicatedRate > 0){
+          LOG(INFO)<<"Replicated Rate:"<<replicatedRate;
+        }
     }
-    // spdk_free(sector_scratch);
     thread_stat->total_us += all_timer.elapsed();
-    // if (verbose_)
-    std::cout << "[Libaio Issue IO Thread]Exit." << std::endl;
+    std::cout << "[SPDK Issue IO Thread]Exit." << std::endl;
     return;
   }
 

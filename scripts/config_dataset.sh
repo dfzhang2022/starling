@@ -55,7 +55,7 @@ dataset_bigann1B() {
   BASE_PATH=/data/dataset/BIGANN/base.1B.u8bin 
   QUERY_FILE=/data/dataset/BIGANN/query.public.10K.u8bin
   GT_FILE=/data/dataset/BIGANN/bigann-1b-gt.bin 
-  PREFIX=bigann_100m
+  PREFIX=bigann_1b
   DATA_TYPE=uint8
   DIST_FN=l2
   B=50

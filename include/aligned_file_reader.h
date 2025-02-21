@@ -152,3 +152,37 @@ class AlignedFileReader {
   virtual int submit_reqs(std::vector<AlignedRead>& read_reqs, IOContext& ctx) = 0;
   virtual void get_events(IOContext &ctx, int n_ops) = 0;
 };
+
+
+
+double calculateBlockIdFrequency(const std::vector<AlignedRead>& reads) {
+  // Use an unordered_map to count the occurrences of each block_id
+  std::unordered_map<uint64_t, uint64_t> blockIdCount;
+
+  // Iterate over all AlignedRead elements and count the occurrences of block_id
+  for (const auto& read : reads) {
+      blockIdCount[read.block_id]++;
+  }
+
+  // Get the total number of reads
+  size_t totalReads = reads.size();
+  if (totalReads == 0) {
+      std::cout << "No reads to process." << std::endl;
+      return;
+  }
+  size_t diffReadNum = blockIdCount.size();
+
+  // Output the count and repetition rate for each block_id
+  // for (const auto& entry : blockIdCount) {
+  //     uint64_t blockId = entry.first;
+  //     uint64_t count = entry.second;
+  //     double repetitionRate = static_cast<double>(count) / totalReads;
+      
+  //     // Print the block_id, its count, and the repetition rate as a percentage
+  //     std::cout << "Block ID: " << blockId
+  //               << " | Count: " << count
+  //               << " | Repetition Rate: " << repetitionRate * 100.0 << "%" << std::endl;
+  // }
+
+  return (totalReads - diffReadNum)/totalReads;
+}

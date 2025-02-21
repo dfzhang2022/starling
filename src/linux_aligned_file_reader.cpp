@@ -8,7 +8,7 @@
 #include <iostream>
 #include "tsl/robin_map.h"
 #include "utils.h"
-#define MAX_EVENTS 2048
+#define MAX_EVENTS 1024
 
 namespace {
   typedef struct io_event io_event_t;
