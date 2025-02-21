@@ -5,7 +5,12 @@ set -e
 
 source config_local.sh
 
-SOURCE_CODE_PATH=/home/cube/starling
+HOME=/home/user/dfzhang
+
+PCI_ADDR="0000:a1:00.0"
+
+SOURCE_CODE_PATH=${HOME}/starling
+SPDK_PATH=${HOME}/spdk
 
 INDICES_PATH=/data/dataset/indices
 
@@ -40,6 +45,17 @@ case $1 in
   release)
     cmake -DCMAKE_BUILD_TYPE=Release .. -B ../release
     EXE_PATH=${SOURCE_CODE_PATH}/release
+  ;;
+  set)
+    pushd ${SPDK_PATH} 
+    pwd
+    HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh
+    popd
+  reset)
+    pushd ${SPDK_PATH} 
+    pwd
+    HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh reset
+    popd
   ;;
   *)
     print_usage_and_exit
