@@ -42,7 +42,7 @@ size_t final_coro_size = 2;
 
 #define BEAMWIDTH 512
 
-#define SECTOR_LEN (_u64) 512
+#define SECTOR_LEN (_u64) 4096
 
 #define LBA_SIZE 512
 
@@ -1067,14 +1067,20 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
   // }
   _u64 file_size = READ_SECTOR_LEN + READ_SECTOR_LEN * ((expected_npts + nnodes_per_sector - 1) / nnodes_per_sector);
   LOG(INFO)<<"file_size:  "<<file_size<<std::endl;
-  std::unique_ptr<char[]> mem_index =
-      std::make_unique<char[]>(file_size);
+  
   std::ifstream diskann_reader(indexname);
-  diskann_reader.read(mem_index.get(),file_size);
+  if (!diskann_reader.is_open()) {
+    LOG(ERROR) << "Failed to open file: " << indexname << std::endl;
+    return; // 或者进行其他错误处理
+  }
+  
 
   unsigned batch_size = 1024;
   unsigned sector_size = ((expected_npts + nnodes_per_sector - 1) / nnodes_per_sector) + 1;
   LOG(INFO)<<"sector_size:  "<<sector_size<<std::endl;
+
+  std::unique_ptr<char[]> mem_index = std::make_unique<char[]>(READ_SECTOR_LEN*batch_size);
+  
 
   unsigned wrt_idx = 0;
 
@@ -1082,19 +1088,23 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
     SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
   
   while(wrt_idx<sector_size){
+    
     unsigned wrt_size_iter = std::min(sector_size - wrt_idx , batch_size);
-    memcpy(buf_2,mem_index.get()+wrt_idx*READ_SECTOR_LEN,wrt_size_iter*READ_SECTOR_LEN);
-    int res = memcmp(buf_2,mem_index.get()+wrt_idx*READ_SECTOR_LEN,wrt_size_iter*READ_SECTOR_LEN);
+    diskann_reader.read(mem_index.get(), READ_SECTOR_LEN * wrt_size_iter);
+    if (diskann_reader.gcount() !=
+        static_cast<std::streamsize>(READ_SECTOR_LEN * wrt_size_iter)) {
+      LOG(ERROR) << "Failed to read the expected number of bytes at wrt_idx: "
+                 << wrt_idx << std::endl;
+      break;
+    }
+    memcpy(buf_2,mem_index.get(),wrt_size_iter*READ_SECTOR_LEN);
+    int res = memcmp(buf_2,mem_index.get(),wrt_size_iter*READ_SECTOR_LEN);
     if(res!=0){
       LOG(INFO)<<res<<" "<<wrt_idx<<std::endl;
     }
     reader->SyncWrite(buf_2,wrt_size_iter*READ_SECTOR_LEN,wrt_idx,0);
     wrt_idx += wrt_size_iter;
   }
-  reader->SyncRead(buf_2,batch_size*READ_SECTOR_LEN,0,0);
-  int res = memcmp(buf_2,mem_index.get()+0*READ_SECTOR_LEN,batch_size*READ_SECTOR_LEN);
-  LOG(INFO)<<res<<std::endl;
-  LOG(INFO)<<wrt_idx<<std::endl;
 
   spdk_free(buf_2);
 
@@ -1141,15 +1151,16 @@ int main(int argc, char* argv[]) {
   // std::cout<<"Final reap avg: "<<reap_time/TEST_TIME<< " for "<<BEAMWIDTH<<std::endl;
   // std::cout<<io_time/TEST_TIME<<" "<<submit_time/TEST_TIME<<" "<<reap_time/TEST_TIME<<std::endl;
 
-  // std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = ssdps::SpdkWrapper::create(1);
-  // spdk_reader->Init();
+  std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = ssdps::SpdkWrapper::create(1);
+  spdk_reader->Init();
   // char *sector_scratch = (char *)spdk_zmalloc(LBA_SIZE*QD, LBA_SIZE, NULL, SPDK_ENV_SOCKET_ID_ANY,
   //   SPDK_MALLOC_DMA);
   // spdk_reader->SyncRead(sector_scratch,LBA_SIZE,0,0);
 
   float a = 0,b = 0,c = 0;
-  multithread_libaio_spdk(a,b,c);
+  // multithread_libaio_spdk(a,b,c);
   // writeIndexToSPDK("/data/dataset/indices/bigann_100m_M200_R64_L100_B5/_disk.index",spdk_reader.get());
+  writeIndexToSPDK("/data/dataset/indices/bigann_100m_M200_R64_L100_B5/_disk.index",spdk_reader.get());
 
   return 0;
 }

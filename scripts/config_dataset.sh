@@ -17,7 +17,7 @@ dataset_bigann10M() {
   DATA_DIM=128
   DATA_N=10000000
 }
-my_dataset_bigann10M() {
+my_dataset_bigann100M() {
   BASE_PATH=/data/dataset/BIGANN/learn.100M.u8bin
   QUERY_FILE=/data/dataset/BIGANN/query.public.10K.u8bin
   GT_FILE=/data/dataset/BIGANN/GT_10M/bigann-10M

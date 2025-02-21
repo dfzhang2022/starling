@@ -41,6 +41,39 @@ namespace diskann {
               << (thread_stat->executing_in_coro_us) / thread_stat->total_us
               << std::endl;
   }
+
+
+  double calculateBlockIdFrequency(const std::vector<AlignedRead>& reads) {
+    // Use an unordered_map to count the occurrences of each block_id
+    std::unordered_map<uint64_t, uint64_t> blockIdCount;
+  
+    // Iterate over all AlignedRead elements and count the occurrences of block_id
+    for (const auto& read : reads) {
+        blockIdCount[read.block_id]++;
+    }
+  
+    // Get the total number of reads
+    size_t totalReads = reads.size();
+    if (totalReads == 0) {
+        std::cout << "No reads to process." << std::endl;
+        return 0;
+    }
+    size_t diffReadNum = blockIdCount.size();
+  
+    // Output the count and repetition rate for each block_id
+    // for (const auto& entry : blockIdCount) {
+    //     uint64_t blockId = entry.first;
+    //     uint64_t count = entry.second;
+    //     double repetitionRate = static_cast<double>(count) / totalReads;
+        
+    //     // Print the block_id, its count, and the repetition rate as a percentage
+    //     std::cout << "Block ID: " << blockId
+    //               << " | Count: " << count
+    //               << " | Repetition Rate: " << repetitionRate * 100.0 << "%" << std::endl;
+    // }
+  
+    return (totalReads - diffReadNum)/totalReads;
+  }
   template<typename T>
   void LibaioIORegisterAwaiter<T>::await_suspend(
       cppcoro::coroutine_handle<> handle) {
@@ -1849,10 +1882,10 @@ template<typename T>
             std::cout << "Return num is not 4096." <<cqes[i]->res<<"<<<"<<std::endl;
           }
 
-          double time = std::chrono::duration_cast<std::chrono::microseconds>(
-                            std::chrono::high_resolution_clock::now() -
-                            coro_io_issue_aligned_read_tmp->begin_ts)
-                            .count();
+          // double time = std::chrono::duration_cast<std::chrono::microseconds>(
+          //                   std::chrono::high_resolution_clock::now() -
+          //                   coro_io_issue_aligned_read_tmp->begin_ts)
+          //                   .count();
           // std::cout<<time<<std::endl;
           int thread_id = coro_io_issue_aligned_read_tmp->thread_id;
           int coro_id = coro_io_issue_aligned_read_tmp->coro_id;
@@ -2055,7 +2088,6 @@ template<typename T>
     all_timer.reset();
     cpu_timer.reset();
     io_timer.reset();
-    uint64_t num_issued = 0;
     
     std::cout << "[SPDK Issue IO Thread]Enter thread." << std::endl;
 
@@ -2077,8 +2109,7 @@ template<typename T>
               for(auto item: query_io_per_coro[thread_idx][coro_idx].aligned_read_vec){
                 collections.emplace_back(item);
               }
-              collect_coro_id.emplace_back({thread_idx,coro_idx});
-              int io_size = query_io_per_coro[thread_idx][coro_idx].aligned_read_vec.size();     
+              collect_coro_id.emplace_back(thread_idx,coro_idx);
             }
           }
         }
@@ -2088,14 +2119,14 @@ template<typename T>
         thread_stat->io_reap_us += wait_timer.elapsed();
         thread_stat->io_us += io_timer.elapsed();
         for(auto item : collect_coro_id){
-          thread_idx = item.first;
-          coro_idx = item.second;
+          int thread_idx = item.first;
+          int coro_idx = item.second;
           atomic_mark[thread_idx * max_ncoroutines + coro_idx] = 1; // fetch atomic to resume worker coro.
         }
 
-        double replicatedRate = calculateBlockIdFrequency(collections);
-        if (replicatedRate > 0){
-          LOG(INFO)<<"Replicated Rate:"<<replicatedRate;
+        double replicatedRate = diskann::calculateBlockIdFrequency(collections);
+        if (replicatedRate > 0) {
+          LOG(INFO) << "Replicated Rate:" << replicatedRate;
         }
     }
     thread_stat->total_us += all_timer.elapsed();

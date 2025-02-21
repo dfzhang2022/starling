@@ -13,16 +13,15 @@ dataset_bigann100M
 ##################
 R=64
 BUILD_L=100
-M=500
-BUILD_T=192
+M=200
+BUILD_T=4
 
 ########################
 #   Disk Batch Build   #
 ########################
 BATCH_BUILD_R=(48 64 80)
 BATCH_BUILD_L=(100 200)
-M=200
-BUILD_T=144
+
 
 ##################
 #       SQ       #
@@ -65,7 +64,7 @@ GP_CUT=4096 # the graph's degree will been limited at 4096
 #   Search   #
 ##############
 BM_LIST=(8)
-T_LIST=(16)
+T_LIST=(4)
 CACHE=0
 MEM_L=0 # non-zero to enable
 

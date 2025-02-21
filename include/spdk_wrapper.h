@@ -16,7 +16,7 @@
 
 #include <glog/logging.h>
 
-#define SPDK_SECTOR_LEN 512
+#define SPDK_SECTOR_LEN 4096
 #define LBA_SIZE 512
 
 namespace ssdps {

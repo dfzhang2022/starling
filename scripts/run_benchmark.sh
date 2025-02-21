@@ -5,7 +5,7 @@ set -e
 
 source config_local.sh
 
-SOURCE_CODE_PATH=/home/user/dfzhang/starling
+SOURCE_CODE_PATH=/home/cube/starling
 
 INDICES_PATH=/data/dataset/indices
 

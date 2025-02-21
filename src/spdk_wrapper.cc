@@ -297,7 +297,7 @@ private:
     if(strcmp(using_ssd, trid->traddr) != 0){
       return false;
     }
-    std::cout << "Attaching to " << trid->traddr<<std::endl;
+    LOG(INFO)<< "Attaching to " << trid->traddr;
     return true;
   }
 
