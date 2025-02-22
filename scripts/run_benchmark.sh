@@ -51,11 +51,14 @@ case $1 in
     pwd
     HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh
     popd
+    exit 1
+  ;;
   reset)
     pushd ${SPDK_PATH} 
     pwd
     HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh reset
     popd
+    exit 1
   ;;
   *)
     print_usage_and_exit
