@@ -2,6 +2,9 @@
 // Licensed under the MIT license.
 
 #include <iostream>
+
+#include <glog/logging.h>
+
 #include "windows_customizations.h"
 
 namespace diskann {

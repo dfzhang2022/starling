@@ -86,6 +86,7 @@ namespace diskann {
     bool   use_coro = false;
     size_t coro_size = 8;
     size_t coro_io_nthreads = 0;
+    size_t issue_io_thread_num = 1;
 
     // IO related.
     bool pure_io = false;

@@ -64,7 +64,8 @@ GP_CUT=4096 # the graph's degree will been limited at 4096
 #   Search   #
 ##############
 BM_LIST=(8)
-T_LIST=(4)
+# T_LIST=(64)
+T_LIST=(2 4 8 16 32 64)
 CACHE=0
 MEM_L=0 # non-zero to enable
 
@@ -74,8 +75,10 @@ PIPELINE=1
 PS_USE_RATIO=0.3
 
 
-USE_CORO=1
-CORO_SIZE=16
+USE_CORO=0
+CORO_SIZE=10
+
+IO_ISSUE_THREAD_NUM=4
 
 PURE_IO=0
 
@@ -85,7 +88,7 @@ QUERY_NUM=10000
 
 
 # KNN
-LS="100"
+LS="200"
 
 # Range search
 RS_LS="80"

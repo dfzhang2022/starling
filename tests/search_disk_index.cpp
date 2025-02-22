@@ -11,6 +11,7 @@
 #include <time.h>
 #include <boost/program_options.hpp>
 #include <gflags/gflags.h>
+#include <glog/logging.h>
 
 #include "aux_utils.h"
 #include "index.h"
@@ -157,6 +158,10 @@ int search_disk_index(
   bool pure_io = params.pure_io;
 
 
+  // disk_file_path = "/dev/"
+  // LOG(WARNING)<<disk_file_path;
+
+
 
   diskann::cout << "Search parameters: #threads: " << num_threads << ", ";
   if (beamwidth <= 0)
@@ -203,7 +208,7 @@ int search_disk_index(
 
   std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = nullptr;
   if(use_coro){
-    spdk_reader = ssdps::SpdkWrapper::create(1);
+    spdk_reader = ssdps::SpdkWrapper::create(28);
     spdk_reader->Init();
   }
   
@@ -301,6 +306,8 @@ int search_disk_index(
   diskann::cout.setf(std::ios_base::fixed, std::ios_base::floatfield);
   diskann::cout.precision(2);
 
+  std::string search_method;
+
   std::string recall_string = "Recall@" + std::to_string(recall_at);
   diskann::cout << std::setw(6) << "L" 
                 << std::setw(12) << "Beamwidth"
@@ -317,7 +324,8 @@ int search_disk_index(
                 << std::setw(16) << "Aff. cache n"
                 << std::setw(20) << "B4 Load In-Mem"
                 << std::setw(20) << "After Load Cache"
-                << std::setw(15) << "Peak Mem(MB)";
+                << std::setw(15) << "Peak Mem(MB)"
+                << std::setw(15) << "Method";
   if (calc_recall_flag) {
     diskann::cout << std::setw(16) << recall_string << std::endl;
   } else
@@ -368,21 +376,25 @@ int search_disk_index(
     std::cout<<"Query num is "<<query_num<<std::endl;
     if (pure_io) {
       if (use_coro) {
+        search_method="pure_io_coro";
         _pFlashIndex->pure_io_search(query, query_num, optimized_beamwidth,
                                      search_io_limit, stats);
 
       } else {
+        search_method="pure_io_libio";
         _pFlashIndex->pure_libaio_search(query, query_num, optimized_beamwidth,
                                          search_io_limit, stats);
       }
     } else {
       if (use_page_search) {
         if (use_coro) {
+          search_method="bqann";
           _pFlashIndex->bqann_search(
               query, query_num, recall_at, mem_L, L, query_result_ids_64.data(),
               query_result_dists[test_id].data(), optimized_beamwidth,
               search_io_limit, use_reorder_data, use_ratio, stats);
         } else {
+          search_method="starling";
           bool pipeline = use_pipeline;
           _pFlashIndex->starling_search(
               query, query_num, recall_at, mem_L, L, query_result_ids_64.data(),
@@ -390,6 +402,7 @@ int search_disk_index(
               search_io_limit, use_reorder_data, use_ratio, pipeline, stats);
         }
       } else {
+        search_method="diskann";
 #pragma omp parallel for schedule(dynamic, 1)
         for (_s64 i = 0; i < (int64_t) query_num; i++) {
           _pFlashIndex->cached_beam_search(
@@ -478,7 +491,8 @@ int search_disk_index(
                   << std::setw(16) << n_aff_cache_nodes
                   << std::setw(20) << load_mem
                   << std::setw(20) << cache_mem
-                  << std::setw(15) << getProcessPeakRSS();
+                  << std::setw(15) << getProcessPeakRSS()
+                  << std::setw(15) << search_method;
     if (calc_recall_flag) {
       diskann::cout << std::setw(16) << recall << std::endl;
     } else
@@ -500,7 +514,10 @@ int search_disk_index(
                 << ","<< "Aff. cache n"
                 << ","<< "B4 Load In-Mem"
                 << ","<< "After Load Cache"
-                << ","<< "Peak Mem(MB)";
+                << ","<< "Peak Mem(MB)"
+                << "," << "Method"
+                << "," << "Coro_size"
+                << "," << "io_t_num";
   if (calc_recall_flag) {
     diskann::cout << "," << recall_string << std::endl;
   } else
@@ -523,52 +540,72 @@ int search_disk_index(
                   << ","<< n_aff_cache_nodes
                   << ","<< load_mem
                   << ","<< cache_mem
-                  << ","<< getProcessPeakRSS();
-    if (calc_recall_flag) {
-      diskann::cout << "," << recall << std::endl;
-    } else
-      diskann::cout << std::endl;
+                  << ","<< getProcessPeakRSS()
+                  << ","<< search_method;
+  if (params.use_coro) {
+    diskann::cout << ","<< params.coro_size 
+                  << ","<< params.issue_io_thread_num;
+  }else{
+    diskann::cout << ","<< 0
+                  << ","<< 0;
+  }
 
-    diskann::cout <<"Bubble time proportion is:"<< mean_bubble_time_us / mean_latency << std::endl;
+  if (calc_recall_flag) {
+    diskann::cout << "," << recall << std::endl;
+  } else
+    diskann::cout << std::endl;
 
-    {
-      // save block path
-      std::string  block_path_prefix =
-                  result_output_prefix + "_block_path" +"_L" + std::to_string(L)+"_PS"+std::to_string(use_page_search)+ "_B"+ std::to_string(optimized_beamwidth) +"_T"+std::to_string(num_threads);
-      std::string block_path_with_timestamp = block_path_prefix+"_withts.bin";
-      std::string block_path_no_timestamp = block_path_prefix+"_nots.txt";;
-      std::ofstream outFile(block_path_with_timestamp, std::ios::binary);
-      std::ofstream outFile_no_ts(block_path_no_timestamp, std::ios::binary);
-      if (!outFile) {
-          std::cerr << "Failed to open file for writing: " << block_path_with_timestamp << std::endl;
-      }else if(!outFile_no_ts){
-          std::cerr << "Failed to open file for writing: " << block_path_no_timestamp << std::endl;
-      }else{
-        // 写入 query 数量
-        // size_t query_num = queries.size();
-        outFile.write(reinterpret_cast<const char*>(&query_num), sizeof(query_num));
-        outFile_no_ts<<std::to_string(query_num)<<std::endl;
-        // 遍历每个查
-        for (_s64 i = 0; i < (int64_t) query_num; i++) {
-          size_t block_num = stats[i].block_visited_queue.size();
-          outFile.write(reinterpret_cast<const char*>(&block_num), sizeof(block_num));
-          outFile_no_ts<<std::to_string(block_num);
-          // 写入每个 BlockVisited
-            for (const auto& block : stats[i].block_visited_queue) {
-                // 写入 block_id
-                outFile.write(reinterpret_cast<const char*>(&block.block_id), sizeof(block.block_id));
-                outFile_no_ts<<" "<<std::to_string(block.block_id);
+  diskann::cout << "Bubble time proportion is:"
+                << mean_bubble_time_us / mean_latency << std::endl;
 
-                // 将 timestamp 转换为 float（秒数）并写入
-                std::chrono::duration<double> diff = block.timestamp - s;
-                float timestamp_float =  diff.count();
-                outFile.write(reinterpret_cast<const char*>(&timestamp_float), sizeof(timestamp_float));
-            }
-          outFile_no_ts<<std::endl;
+  {
+    // save block path
+    std::string block_path_prefix = result_output_prefix + "_block_path" +
+                                    "_L" + std::to_string(L) + "_PS" +
+                                    std::to_string(use_page_search) + "_B" +
+                                    std::to_string(optimized_beamwidth) + "_T" +
+                                    std::to_string(num_threads);
+    std::string block_path_with_timestamp = block_path_prefix + "_withts.bin";
+    std::string block_path_no_timestamp = block_path_prefix + "_nots.txt";
+    ;
+    std::ofstream outFile(block_path_with_timestamp, std::ios::binary);
+    std::ofstream outFile_no_ts(block_path_no_timestamp, std::ios::binary);
+    if (!outFile) {
+      std::cerr << "Failed to open file for writing: "
+                << block_path_with_timestamp << std::endl;
+    } else if (!outFile_no_ts) {
+      std::cerr << "Failed to open file for writing: "
+                << block_path_no_timestamp << std::endl;
+    } else {
+      // 写入 query 数量
+      // size_t query_num = queries.size();
+      outFile.write(reinterpret_cast<const char*>(&query_num),
+                    sizeof(query_num));
+      outFile_no_ts << std::to_string(query_num) << std::endl;
+      // 遍历每个查
+      for (_s64 i = 0; i < (int64_t) query_num; i++) {
+        size_t block_num = stats[i].block_visited_queue.size();
+        outFile.write(reinterpret_cast<const char*>(&block_num),
+                      sizeof(block_num));
+        outFile_no_ts << std::to_string(block_num);
+        // 写入每个 BlockVisited
+        for (const auto& block : stats[i].block_visited_queue) {
+          // 写入 block_id
+          outFile.write(reinterpret_cast<const char*>(&block.block_id),
+                        sizeof(block.block_id));
+          outFile_no_ts << " " << std::to_string(block.block_id);
+
+          // 将 timestamp 转换为 float（秒数）并写入
+          std::chrono::duration<double> diff = block.timestamp - s;
+          float                         timestamp_float = diff.count();
+          outFile.write(reinterpret_cast<const char*>(&timestamp_float),
+                        sizeof(timestamp_float));
         }
-        outFile.close();
-        outFile_no_ts.close();
+        outFile_no_ts << std::endl;
       }
+      outFile.close();
+      outFile_no_ts.close();
+    }
       
     }
 
@@ -610,11 +647,18 @@ int main(int argc, char** argv) {
   bool                  use_pipeline = true;
   bool                  page_expansion = true;
   bool                  use_coro = false;
+  unsigned              issue_io_thread_num = 1;
   float                 use_ratio = 1.0;
   bool                  pure_io = false;
   unsigned query_num = 0;
   bool use_sq = false;
   unsigned coro_size = 0;
+
+  google::InitGoogleLogging(argv[0]);
+  // FLAGS_log_dir = "./logs";
+  FLAGS_logtostderr = false;  // 不输出到标准错误流
+  FLAGS_alsologtostderr = true;
+  FLAGS_minloglevel = 0;  // 0: INFO, 1: WARNING, 2: ERROR, 3: FATAL
 
   po::options_description desc{"Arguments"};
   try {
@@ -676,6 +720,8 @@ int main(int argc, char** argv) {
                        "Use 1 for using page_expansion in search (default), 0 for node_expansion");
     desc.add_options()("use_coro", po::value<bool>(&use_coro)->default_value(0),
                        "Use 1 for using coroutine in IO, 0 for using coroutine (default).");
+    desc.add_options()("issue_io_thread_num", po::value<unsigned>(&issue_io_thread_num)->default_value(1),
+                       "IO thread num for spdk");
     desc.add_options()("coro_size", po::value<unsigned>(&coro_size)->default_value(1),
                        "coro size per thread");
     desc.add_options()("pure_io", po::value<bool>(&pure_io)->default_value(0),
@@ -761,6 +807,7 @@ int main(int argc, char** argv) {
   params.pure_io = pure_io;
 
   params.query_num = query_num;
+  params.issue_io_thread_num = issue_io_thread_num;
 
   try {
     if (data_type == std::string("float"))

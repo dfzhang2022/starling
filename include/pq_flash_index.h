@@ -175,6 +175,7 @@ namespace diskann {
     }
     void load_search_params(diskann::SearchParams& params){
       this->use_bq_search_ = params.use_coro;
+      this->io_nthreads = params.issue_io_thread_num;
       return;
     }
 
@@ -217,7 +218,7 @@ namespace diskann {
     void register_io(int thread_id, int coro_id, int cnt) {
       std::unique_lock<std::mutex> lk(coro_io_queue_mutex);
       // int idx = CORO_FINAL_NO(thread_id,coro_id);
-      n_io_executing[thread_id][coro_id] = cnt;
+      // n_io_executing[thread_id][coro_id] = cnt;
       // atomic_mark[thread_id*max_ncoroutines+coro_id] = 0;
       // atomic_mark[thread_id*max_ncoroutines+coro_id] = 1;
       // io_state[thread_id][coro_id] = IORequestState::WaitingForIO;

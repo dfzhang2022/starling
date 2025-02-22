@@ -17,18 +17,6 @@ dataset_bigann10M() {
   DATA_DIM=128
   DATA_N=10000000
 }
-my_dataset_bigann100M() {
-  BASE_PATH=/data/dataset/BIGANN/learn.100M.u8bin
-  QUERY_FILE=/data/dataset/BIGANN/query.public.10K.u8bin
-  GT_FILE=/data/dataset/BIGANN/bigann-10M-gt.bin
-  PREFIX=bigann_100m
-  DATA_TYPE=uint8
-  DIST_FN=l2
-  B=5
-  K=10
-  DATA_DIM=128
-  DATA_N=10000000
-}
 
 
 ##################
@@ -54,7 +42,7 @@ dataset_bigann100M() {
 dataset_bigann1B() {
   BASE_PATH=/data/dataset/BIGANN/base.1B.u8bin 
   QUERY_FILE=/data/dataset/BIGANN/query.public.10K.u8bin
-  GT_FILE=/data/dataset/BIGANN/bigann-1b-gt.bin 
+  GT_FILE=/data/dataset/BIGANN/bigann-1B-gt.bin 
   PREFIX=bigann_1b
   DATA_TYPE=uint8
   DIST_FN=l2
@@ -73,7 +61,7 @@ dataset_bigann1B() {
 dataset_350M() {
   BASE_PATH=/data/dataset/DEEP/learn.350M.fbin
   QUERY_FILE=/data/dataset/DEEP/query.public.10K.fbin
-  GT_FILE=/data/dataset/DEEP/deep-10k-gt.fbin 
+  GT_FILE=/data/dataset/DEEP/deep-350M-gt.fbin 
   PREFIX=deep_350m
   DATA_TYPE=float
   DIST_FN=l2
@@ -88,12 +76,12 @@ dataset_350M() {
 
 
 dataset_deep10m() {
-  BASE_PATH=/data/dataset/DEEP1B/base.10M.fbin
-  QUERY_FILE=/data/dataset/DEEP1B/query.public.10K.fbin
-  GT_FILE=/data/dataset/DEEP1B/deep-10k-gt.fbin 
+  BASE_PATH=/data/dataset/DEEP/base.10M.fbin
+  QUERY_FILE=/data/dataset/DEEP/query.public.10K.fbin
+  GT_FILE=/data/dataset/DEEP/deep-10M-gt.fbin 
   PREFIX=deep_10m
   DATA_TYPE=float
   DIST_FN=l2
   B=16
-  K=10
+  K=100
 }

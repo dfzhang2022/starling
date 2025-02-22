@@ -8,7 +8,7 @@
 #include <iostream>
 #include "tsl/robin_map.h"
 #include "utils.h"
-#define MAX_EVENTS 1024
+#define MAX_EVENTS 512
 
 namespace {
   typedef struct io_event io_event_t;
@@ -132,8 +132,8 @@ void LinuxAlignedFileReader::register_thread() {
     lk.unlock();
     assert(errno != EAGAIN);
     assert(errno != ENOMEM);
-    std::cerr << "io_setup() failed; returned " << ret << ", errno=" << errno
-              << ":" << ::strerror(errno) << std::endl;
+    LOG(ERROR)<<"io_setup() failed; returned " << ret << ", errno=" << errno
+              << ":" << ::strerror(errno);
   } else {
     diskann::cout << "allocating ctx: " << ctx << " to thread-id:" << my_id
                   << std::endl;

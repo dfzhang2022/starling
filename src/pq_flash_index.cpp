@@ -266,8 +266,8 @@ namespace diskann {
         if (ret != 0) {
           assert(errno != EAGAIN);
           assert(errno != ENOMEM);
-          std::cerr << "io_setup() failed; returned " << ret << ", errno=" << errno
-                    << ":" << ::strerror(errno) << std::endl;
+          LOG(ERROR)<<"io_setup() failed; returned " << ret << ", errno=" << errno
+                    << ":" << ::strerror(errno);
           return;
         } else {
           diskann::cout<< " allocating ctx: " << ctx_vec[k][t]<<" to "<<k<<", "<<t<< std::endl;
@@ -279,7 +279,7 @@ namespace diskann {
 
     auto result = io_uring_queue_init(1024, &ring_, 0);
     if (result != 0) {
-      std::cout << "io_uring init error!" << std::endl;
+      LOG(ERROR)<< "io_uring init error!";
     }
 
     size_t ring_num = MAX_IO_RING_NUM;
@@ -1001,6 +1001,10 @@ namespace diskann {
 #ifndef EXEC_ENV_OLS
     // open AlignedFileReader handle to index_file
     std::string index_fname(disk_index_file);
+    if(!use_bq_search_){
+      index_fname="/dev/nvme2n1";
+    }
+    LOG(WARNING) << "Be careful the actual index file: " << index_fname << std::endl;
     reader->open(index_fname);
     this->index_fd_ = open(index_fname.c_str(),O_RDONLY | O_NOATIME |O_DIRECT);
     

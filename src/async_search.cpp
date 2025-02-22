@@ -17,10 +17,10 @@ namespace diskann {
       std::cout << "I/O error status: "
                  << spdk_nvme_cpl_get_status_string(&cpl->status);
     }else{
-      std::atomic<int> *p = (std::atomic<int> *)ctx;
-      p->fetch_add(1);
-    }
-    
+    std::atomic<int> *p = (std::atomic<int> *)ctx;
+    p->fetch_add(1);
+  }
+
   }
 
   void thread_stat_print(ThreadStats* thread_stat, bool is_coro = false){
@@ -30,12 +30,6 @@ namespace diskann {
               << thread_stat->awaiter_time_us / thread_stat->total_us
               << ", submit wait:"
               << thread_stat->awaiter_middle_time_us / thread_stat->total_us
-              << ", wait lock: "
-              << thread_stat->wait_ring_lock_us / thread_stat->total_us
-              << ", sche_cpu: "
-              << thread_stat->scheduler_cpu_us / thread_stat->total_us
-              << ", sche_wait: "
-              << thread_stat->scheduler_wait_us / thread_stat->total_us
               << ", sche_all: "
               << thread_stat->scheduler_total_us / thread_stat->total_us
               << ", cpu usage:"
@@ -44,7 +38,7 @@ namespace diskann {
   }
 
 
-  double calculateBlockIdFrequency(const std::vector<AlignedRead>& reads) {
+  double calculateBlockIdFrequency(const std::vector<AlignedRead>& reads, int& distinctNum, int& allNum) {
     // Use an unordered_map to count the occurrences of each block_id
     std::unordered_map<uint64_t, uint64_t> blockIdCount;
   
@@ -66,7 +60,7 @@ namespace diskann {
 
     size_t diffReadNum = blockIdCount.size();
     if(diffReadNum<totalReads){
-      std::cout << "map#"<<diffReadNum<<" ,totalReads: "<<totalReads << std::endl;
+      // std::cout << "map#"<<diffReadNum<<" ,totalReads: "<<totalReads << std::endl;
     }
   
     // Output the count and repetition rate for each block_id
@@ -81,6 +75,8 @@ namespace diskann {
     //               << " | Repetition Rate: " << repetitionRate * 100.0 << "%" << std::endl;
     // }
   
+    distinctNum = diffReadNum;
+    allNum = totalReads;
     return (totalReads - diffReadNum)/totalReads;
   }
   template<typename T>
@@ -102,7 +98,7 @@ namespace diskann {
     
     new_timer.reset();
     int returned = pq_flash_index_->libaio_submit(this->aligned_read_vec_, thread_id_local, coro_id_local);
-    pq_flash_index_->register_io(thread_id_local, coro_id_local, cnt);
+    // pq_flash_index_->register_io(thread_id_local, coro_id_local, cnt);
     // int returned = pq_flash_index_->batch_push(this->aligned_read_vec_, thread_id_local);
     thread_stat_->awaiter_middle_time_us += new_timer.elapsed();
     if(returned!=cnt){
@@ -833,7 +829,7 @@ namespace diskann {
       // cpu_timer.reset();
       // all_timer.reset();
 
-      expected = 1;
+      expected = libaio_cnt[thread_id][last_idx];
       if(this->atomic_mark[thread_id*max_ncoroutines+last_idx].compare_exchange_strong(expected,0)){
         // std::cout<<"try to awake, thr:"<<thread_id<<", coro:"<<last_idx<<std::endl;
         int coro_id = last_idx;
@@ -1484,11 +1480,11 @@ namespace diskann {
     // lk.unlock();
     std::vector<std::thread> all_threads;
     // size_t n_io_thread_num = 1;
-    size_t issue_io_thread_num = 1;
+    size_t issue_io_thread_num = this->io_nthreads;
     size_t reap_io_thread_num = 0;
 
 
-    std::cout<<"bqann search start."<<std::endl;
+    LOG(INFO)<<"BQANN search start. worker: "<< this->max_nthreads << " io: "<< issue_io_thread_num;
 
     // add worker
     for (_u64 i = 0; i < this->max_nthreads; i++) {
@@ -2099,6 +2095,8 @@ template<typename T>
     io_timer.reset();
     
     std::cout << "[SPDK Issue IO Thread]Enter thread." << std::endl;
+    int uniqueReadNum = 0, allReadNum = 0;
+
 
     while(true){
         if( (this->executing_thread_num == 0) ){
@@ -2113,38 +2111,62 @@ template<typename T>
           for (size_t coro_idx = 0; coro_idx < max_ncoroutines; coro_idx++) {
             if (query_io_per_coro[thread_idx][coro_idx].valid) {
               io_timer.reset();
+              wait_timer.reset();
               query_io_per_coro[thread_idx][coro_idx].valid = false;
               for(auto item: query_io_per_coro[thread_idx][coro_idx].aligned_read_vec){
                 collections.emplace_back(item);
+                // spdk_reader->SubmitRead4K(item,&cb,&atomic_mark[thread_idx * max_ncoroutines + coro_idx],this_thread_idx);
               }
-              collect_coro_id.emplace_back(thread_idx,coro_idx);
+              // std::cout<<atomic_mark[thread_idx * max_ncoroutines + coro_idx]<<std::endl;
+              // collect_coro_id.emplace_back(thread_idx,coro_idx);
+              thread_stat->io_submit_us += wait_timer.elapsed();
               thread_stat->io_us += io_timer.elapsed();
             }
           }
         }
-        double replicatedRate = diskann::calculateBlockIdFrequency(collections);
+
+        int    distinctNum = 0, allNum = 0;
+        double replicatedRate = diskann::calculateBlockIdFrequency(
+            collections, distinctNum, allNum);
         if (replicatedRate > 0) {
           LOG(INFO) << "Replicated Rate:" << replicatedRate;
         }
+        uniqueReadNum += distinctNum;
+        allReadNum += allNum;
         if (collections.size() > 0) {
-          std::cout << "collections.size() = " << collections.size()<<std::endl;
+          // std::cout << "collections.size() = " << collections.size()<<std::endl;
           io_timer.reset();
           wait_timer.reset();
-          spdk_reader->BatchSyncRead4K(collections, this_thread_idx);
-          for (auto item : collect_coro_id) {
-            int thread_idx = item.first;
-            int coro_idx = item.second;
-            atomic_mark[thread_idx * max_ncoroutines + coro_idx] =
-                1;  // fetch atomic to resume worker coro.
+          for(auto item : collections){
+            spdk_reader->SubmitRead4K(item,&cb,&atomic_mark[item.thread_id * max_ncoroutines + item.coro_id],this_thread_idx);
+            thread_stat->n_ios++;
           }
           thread_stat->io_submit_us += wait_timer.elapsed();
-          thread_stat->io_reap_us += wait_timer.elapsed();
-          thread_stat->io_us += io_timer.elapsed();
-        }
 
-        
+          // spdk_reader->BatchSyncRead4K(collections, this_thread_idx);
+          // for (auto item : collect_coro_id) {
+          //   int thread_idx = item.first;
+          //   int coro_idx = item.second;
+          //   atomic_mark[thread_idx * max_ncoroutines + coro_idx] =
+          //       1;  // fetch atomic to resume worker coro.
+          // }
+          
+        }
+        wait_timer.reset();
+        while (true) {
+          int32_t return_val =
+              spdk_reader->myPollCompleteQueue(this_thread_idx);
+          if (return_val < 0) {
+            LOG(ERROR) << "Poll return negated.";
+          } else if (return_val == 0) {
+            break;
+          }
+        }
+        thread_stat->io_reap_us += wait_timer.elapsed();
+        thread_stat->io_us += wait_timer.elapsed();
     }
     thread_stat->total_us += all_timer.elapsed();
+    LOG(INFO) << "[SPDK Issue IO Thread] dupRate: "<<(double)uniqueReadNum/allReadNum<<" distinct ios: "<<uniqueReadNum<<", total ios: "<<allReadNum;
     std::cout << "[SPDK Issue IO Thread]Exit." << std::endl;
     return;
   }

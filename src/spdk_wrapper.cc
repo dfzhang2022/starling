@@ -6,7 +6,7 @@
 #include <vector>
 // #include <google/glog.h>
 
-const char *using_ssd = "0000:02:00.0";
+const char *using_ssd = "0000:a1:00.0";
 
 namespace ssdps {
 
@@ -20,7 +20,7 @@ private:
   void Init() override {
     std::cout << "Initializing NVMe Controllers"<<std::endl;
 
-    LOG(INFO)<<"SECTOR_LEN"<<SECTOR_LEN<<" and actual lba_size: "<<kLBASize_;
+    LOG(INFO)<<"SECTOR_LEN "<<SECTOR_LEN<<" and actual lba_size: "<<kLBASize_;
     CHECK_EQ(SECTOR_LEN%kLBASize_,0);
 
     int rc;
@@ -135,6 +135,7 @@ private:
       auto ret = spdk_nvme_ns_cmd_read(ns_entry.ns, ns_entry.qpair[qp_id], pinned_dst,
                                        lba, lba_count, func, ctx, 0);
       if (ret == 0) {
+        // std::cout<<"read compelete"<<std::endl;
         return;
       } else if (ret == -ENOMEM) {
         // FB_LOG_EVERY_MS(ERROR, 10000)
@@ -150,6 +151,11 @@ private:
    void PollCompleteQueue(int qp_id) override {
     auto ns_entry = g_namespaces_[0];
     spdk_nvme_qpair_process_completions(ns_entry.qpair[qp_id], 0);
+  }
+  int32_t myPollCompleteQueue(int qp_id) override {
+    auto ns_entry = g_namespaces_[0];
+    
+    return spdk_nvme_qpair_process_completions(ns_entry.qpair[qp_id], 0);
   }
 
    int GetLBASize() const override { return kLBASize_; }
@@ -199,9 +205,18 @@ private:
     for (size_t i = 0; i < read_vec.size(); i++) {
       int64_t actual_lba = read_vec[i].block_id*(this->SECTOR_LEN/this->kLBASize_);
       SubmitReadCommand(read_vec[i].buf, read_vec[i].len, actual_lba,
-                        BatchSyncCommandCompleteCB, &counter, 0);
+                        BatchSyncCommandCompleteCB, &counter, qp_id);
     }
     while (counter != (int)io_size) PollCompleteQueue(qp_id);
+  }
+  void SubmitRead4K(AlignedRead& read,spdk_nvme_cmd_cb func,
+    void *ctx, int qp_id) override {
+    CHECK_EQ(SECTOR_LEN%kLBASize_,0);
+    int64_t actual_lba = read.block_id*(this->SECTOR_LEN/this->kLBASize_);
+    // std::cout<<"submit read"<<std::endl;
+    SubmitReadCommand(read.buf, read.len, actual_lba,
+      func, ctx, qp_id);
+
   }
 
   void SyncWrite(const void *pinned_src, const int64_t bytes,
@@ -294,6 +309,7 @@ private:
                             const struct spdk_nvme_transport_id *trid,
                             struct spdk_nvme_ctrlr_opts *opts) {
     if(strcmp(using_ssd, trid->traddr) != 0){
+      CHECK_EQ(using_ssd, trid->traddr)<<"spdk using "<<using_ssd;
       return false;
     }
     LOG(INFO)<< "Attaching to " << trid->traddr;
@@ -344,6 +360,8 @@ private:
       ptr->g_namespaces_.push_back(entry);
 
       LOG(INFO)<<"Namespace ID: "<<spdk_nvme_ns_get_id(ns)<<" size: "<<spdk_nvme_ns_get_size(ns) / 1000000000<<" GB";
+      LOG(INFO)<<"Sector Size: "<<spdk_nvme_ns_get_sector_size(ns)<<" UUID: "<<spdk_nvme_ns_get_uuid(ns);
+      CHECK_EQ(spdk_nvme_ns_get_sector_size(ns),ptr->kLBASize_)<<"lba size not match";
     }
   }
   spdk_env_opts opts_;

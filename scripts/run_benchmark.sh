@@ -302,14 +302,23 @@ case $2 in
     # choose the disk index file by settings
     DISK_FILE_PATH=${INDEX_PREFIX_PATH}_disk.index
     if [ $USE_CORO -eq 1 ]; then
+      pushd ${SPDK_PATH} 
+      pwd
+      HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh
+      popd
       echo "Using Coro"
+    else
+      pushd ${SPDK_PATH} 
+      pwd
+      HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh reset
+      popd
+      echo "Using Page Search"
     fi
     if [ $USE_PAGE_SEARCH -eq 1 ]; then
       if [ ! -f ${INDEX_PREFIX_PATH}_partition.bin ]; then
         echo "Partition file not found. Run the script with gp option first."
         exit 1
       fi
-      echo "Using Page Search"
     else
       OLD_INDEX_FILE=${INDEX_PREFIX_PATH}_disk_beam_search.index
       if [ -f ${OLD_INDEX_FILE} ]; then
@@ -327,7 +336,7 @@ case $2 in
         do
           for T in ${T_LIST[@]}
           do
-            SEARCH_LOG=${INDEX_PREFIX_PATH}search/search_BW${BW}_T${T}_K${K}_PS${USE_PAGE_SEARCH}_PIPE${PIPELINE}_CORO${USE_CORO}_COROSZ${CORO_SIZE}_USE_RATIO${PS_USE_RATIO}_PUREIO${PURE_IO}.log
+            SEARCH_LOG=${INDEX_PREFIX_PATH}search/search_L${LS}_BW${BW}_T${T}_K${K}_PS${USE_PAGE_SEARCH}_PIPE${PIPELINE}_CORO${USE_CORO}_COROSZ${CORO_SIZE}_USE_RATIO${PS_USE_RATIO}_PUREIO${PURE_IO}.log
             echo "Searching... log file: ${SEARCH_LOG}"
             # echo "${EXE_PATH}/tests/search_disk_index --data_type $DATA_TYPE \
             #   --dist_fn $DIST_FN \
@@ -369,7 +378,8 @@ case $2 in
               --use_coro ${USE_CORO}    \
               --coro_size ${CORO_SIZE} \
               --pure_io  ${PURE_IO}    \
-              --query_num ${QUERY_NUM}  > ${SEARCH_LOG} 
+              --query_num ${QUERY_NUM}  \
+              --issue_io_thread_num ${IO_ISSUE_THREAD_NUM} > ${SEARCH_LOG} 
             log_arr+=( ${SEARCH_LOG} )
           done
         done
