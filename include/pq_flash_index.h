@@ -130,12 +130,6 @@ namespace diskann {
     int                     coro_idx{-1};
   };
 
-  struct QueryIO{
-    std::vector<AlignedRead> aligned_read_vec;
-    int thread_id;
-    int coro_id;
-    bool valid = false;
-  };
 
   template<typename T>
   struct ThreadData {
@@ -236,6 +230,8 @@ namespace diskann {
       libaio_cnt[thread_id][coro_id] = submit_num;
       atomic_mark[thread_id*max_ncoroutines+coro_id]=0;
       query_io_per_coro[thread_id][coro_id].valid = true;
+      query_io_per_coro[thread_id][coro_id].begin_submit();
+      this->bqann_io_queue.enqueue({thread_id, coro_id});
       // int sub_num = reader->submit_reqs(read_reqs,ctx_vec[thread_id][coro_id]);
       // reader->get_events(ctx_vec[thread_id][coro_id],
       //   sub_num);
@@ -526,7 +522,7 @@ namespace diskann {
 
     std::vector<ConcurrentQueue<AlignedRead> *> batch_read_queue_thread;
     std::vector<moodycamel::ConcurrentQueue<AlignedRead*> *> q;
-    
+    moodycamel::ConcurrentQueue<std::pair<int,int>> bqann_io_queue;
 
     std::vector<std::vector<IORequestState>> io_state;
     // std::vector<std::vector<std::atomic<int>>> atomic_mark(MAX_WORKER_THREAD,std::vector<std::atomic<int>>(MAX_WORKER_THREAD));

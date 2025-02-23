@@ -837,6 +837,7 @@ namespace diskann {
         thread_stat->scheduler_total_us+=all_timer.elapsed();
         thread_stat->scheduler_cpu_us+=cpu_timer.elapsed();
         // std::cout<<"Before resume."<<std::endl;
+        float io_complete_time = query_io_per_coro[thread_id][coro_id].get_elapsed_time();
         handles_map[thread_id][coro_id].resume();
         // std::cout<<"After resume."<<std::endl;
         all_timer.reset();
@@ -1543,9 +1544,9 @@ namespace diskann {
       std::cout << "[ISSUE IO Thread #" << i << "] "
                 << ", cpu time:" << tmp->cpu_us / tmp->total_us
                 << ", io time:" << tmp->io_us / tmp->total_us
-                << ", total time:" << tmp->total_us
                 << ", submit time: "<< tmp->io_submit_us / tmp->total_us
                 << ", reap time: "<< tmp->io_reap_us / tmp->total_us
+                << ", distinct: "<<tmp->compute_us / tmp->total_us
                 << ", iops: " << tmp->n_ios / (tmp->total_us / 1000 * 1000)
                 << std::endl;
     }
@@ -1578,7 +1579,7 @@ namespace diskann {
       exit(1);
     }
 
-    Timer all_timer, io_timer, cpu_timer;
+    Timer all_timer;
     all_timer.reset();
     if (verbose_)
       std::cout << "[Worker Thread]Enter thread." << std::endl;
@@ -2106,25 +2107,39 @@ template<typename T>
         std::vector<AlignedRead> collections;
         // collections.reserve(512);
         std::vector<std::pair<int,int>> collect_coro_id;
-        
-        for (size_t thread_idx = this_thread_idx; thread_idx < max_nthreads; thread_idx+=io_thread_num) {
-          for (size_t coro_idx = 0; coro_idx < max_ncoroutines; coro_idx++) {
-            if (query_io_per_coro[thread_idx][coro_idx].valid) {
-              io_timer.reset();
-              wait_timer.reset();
-              query_io_per_coro[thread_idx][coro_idx].valid = false;
-              for(auto item: query_io_per_coro[thread_idx][coro_idx].aligned_read_vec){
-                collections.emplace_back(item);
-                // spdk_reader->SubmitRead4K(item,&cb,&atomic_mark[thread_idx * max_ncoroutines + coro_idx],this_thread_idx);
-              }
-              // std::cout<<atomic_mark[thread_idx * max_ncoroutines + coro_idx]<<std::endl;
-              // collect_coro_id.emplace_back(thread_idx,coro_idx);
-              thread_stat->io_submit_us += wait_timer.elapsed();
-              thread_stat->io_us += io_timer.elapsed();
-            }
-          }
-        }
 
+        int pop_cnt = 0;
+        while(this->bqann_io_queue.size_approx() > 0 && pop_cnt < 512){
+          std::pair<int,int> tmp_pair;
+          this->bqann_io_queue.try_dequeue(tmp_pair);
+          int thread_id = tmp_pair.first;
+          int coro_id = tmp_pair.second;
+          float io_submit_time = this->query_io_per_coro[thread_id][coro_id].get_elapsed_time();
+          for(auto item: query_io_per_coro[thread_id][coro_id].aligned_read_vec){
+            collections.emplace_back(item);
+          }
+          collect_coro_id.emplace_back(thread_id,coro_id);
+          pop_cnt++;
+        }
+        
+        // for (size_t thread_idx = this_thread_idx; thread_idx < max_nthreads; thread_idx+=io_thread_num) {
+        //   for (size_t coro_idx = 0; coro_idx < max_ncoroutines; coro_idx++) {
+        //     if (query_io_per_coro[thread_idx][coro_idx].valid) {
+        //       io_timer.reset();
+        //       wait_timer.reset();
+        //       query_io_per_coro[thread_idx][coro_idx].valid = false;
+        //       for(auto item: query_io_per_coro[thread_idx][coro_idx].aligned_read_vec){
+        //         collections.emplace_back(item);
+        //         // spdk_reader->SubmitRead4K(item,&cb,&atomic_mark[thread_idx * max_ncoroutines + coro_idx],this_thread_idx);
+        //       }
+        //       // std::cout<<atomic_mark[thread_idx * max_ncoroutines + coro_idx]<<std::endl;
+        //       // collect_coro_id.emplace_back(thread_idx,coro_idx);
+        //       thread_stat->io_submit_us += wait_timer.elapsed();
+        //       thread_stat->io_us += io_timer.elapsed();
+        //     }
+        //   }
+        // }
+        wait_timer.reset();
         int    distinctNum = 0, allNum = 0;
         double replicatedRate = diskann::calculateBlockIdFrequency(
             collections, distinctNum, allNum);
@@ -2133,6 +2148,8 @@ template<typename T>
         }
         uniqueReadNum += distinctNum;
         allReadNum += allNum;
+        thread_stat->compute_us += wait_timer.elapsed();
+
         if (collections.size() > 0) {
           // std::cout << "collections.size() = " << collections.size()<<std::endl;
           io_timer.reset();

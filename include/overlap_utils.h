@@ -1,7 +1,7 @@
 #include <unordered_map>
 #include <vector>
 
-// #include "aligned_file_reader.h"
+#include "aligned_file_reader.h"
 #include "pq_flash_index.h"
 
 using namespace diskann;

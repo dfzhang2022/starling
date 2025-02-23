@@ -61,6 +61,8 @@ namespace diskann {
     float io_submit_us = 0;
     float io_reap_us = 0;
 
+    float compute_us = 0;    // total time spent in distinct
+
     float scheduler_total_us = 0;
     float scheduler_cpu_us = 0;
     float scheduler_wait_us = 0;

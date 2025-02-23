@@ -1004,7 +1004,7 @@ namespace diskann {
     if(!use_bq_search_){
       index_fname="/dev/nvme2n1";
     }
-    LOG(WARNING) << "Be careful the actual index file: " << index_fname << std::endl;
+    LOG(WARNING) << "Be careful the actual index file opened is: " << index_fname << std::endl;
     reader->open(index_fname);
     this->index_fd_ = open(index_fname.c_str(),O_RDONLY | O_NOATIME |O_DIRECT);
     

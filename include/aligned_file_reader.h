@@ -69,6 +69,15 @@ struct AlignedRead {
   typedef std::chrono::high_resolution_clock _clock;
   std::chrono::time_point<_clock>            begin_ts;
 
+  Timer timer;
+  void begin_submit(){
+    timer.reset();
+  }
+
+  float get_execute_time(){
+    return timer.elapsed();
+  }
+
   AlignedRead() : offset(0), len(0), buf(nullptr) {
   }
 
@@ -106,6 +115,32 @@ struct AlignedRead {
   }
   void print(){
     std::cout<<block_id<<","<<thread_id<<","<<coro_id<<std::endl;
+  }
+};
+
+
+struct QueryIO{
+  std::vector<AlignedRead> aligned_read_vec;
+  int thread_id;
+  int coro_id;
+  bool valid = false;
+
+  Timer timer;
+
+  QueryIO(){
+    thread_id = -1;
+    coro_id = -1;
+    aligned_read_vec.clear();
+    timer.reset();
+    CHECK_EQ(aligned_read_vec.size(), 0)<< "QueryIO init, but read_vec not empty";
+  }
+
+  void begin_submit(){
+    timer.reset();
+  }
+
+  float get_elapsed_time(){
+    return timer.elapsed();
   }
 };
 

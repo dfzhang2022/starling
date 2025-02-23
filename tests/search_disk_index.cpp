@@ -37,10 +37,9 @@
 
 #define WARMUP false
 
-
 #define READ_SECTOR_LEN (size_t) 4096
 
-DEFINE_string(log_path, "./logs", "Path to log file");
+DEFINE_string(glog_path, "/tmp/logs", "Path to log file");
 DEFINE_int32(age, 0, "The age of the person");
 DEFINE_bool(is_student, false, "Whether the person is a student");
 
@@ -66,7 +65,6 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
   auto meta_pair = diskann::get_disk_index_meta(indexname);
   _u64 actual_index_size = get_file_size(indexname);
   _u64 expected_file_size, expected_npts;
-  _u64                               max_node_len;
 
   std::cout<<"Copy index file: "<<indexname<<" to spdk."<<std::endl;
 
@@ -85,7 +83,6 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
                   << " with meta-data size: " << expected_file_size << std::endl;
     exit(-1);
   }
-  max_node_len = meta_pair.second[3];
   unsigned nnodes_per_sector = meta_pair.second[4];
   
   _u64 file_size = READ_SECTOR_LEN + READ_SECTOR_LEN * ((expected_npts + nnodes_per_sector - 1) / nnodes_per_sector);
@@ -208,7 +205,7 @@ int search_disk_index(
 
   std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = nullptr;
   if(use_coro){
-    spdk_reader = ssdps::SpdkWrapper::create(28);
+    spdk_reader = ssdps::SpdkWrapper::create(4);
     spdk_reader->Init();
   }
   
@@ -638,7 +635,7 @@ int search_disk_index(
 
 int main(int argc, char** argv) {
   std::string data_type, dist_fn, index_path_prefix, result_path_prefix,
-      query_file, gt_file, disk_file_path, mem_index_path;
+      query_file, gt_file, disk_file_path, mem_index_path, glog_path;
   unsigned              num_threads, K, W, num_nodes_to_cache, search_io_limit;
   unsigned              mem_L;
   std::vector<unsigned> Lvec;
@@ -654,11 +651,10 @@ int main(int argc, char** argv) {
   bool use_sq = false;
   unsigned coro_size = 0;
 
-  google::InitGoogleLogging(argv[0]);
-  // FLAGS_log_dir = "./logs";
-  FLAGS_logtostderr = false;  // 不输出到标准错误流
-  FLAGS_alsologtostderr = true;
-  FLAGS_minloglevel = 0;  // 0: INFO, 1: WARNING, 2: ERROR, 3: FATAL
+  // 初始化 gflags
+  // gflags::ParseCommandLineFlags(&argc, &argv, false);
+  
+
 
   po::options_description desc{"Arguments"};
   try {
@@ -732,6 +728,8 @@ int main(int argc, char** argv) {
                        "The path of the disk file (_disk.index in the original DiskANN)");
     desc.add_options()("mem_index_path", po::value<std::string>(&mem_index_path)->default_value(""),
                        "The prefix path of the mem_index");
+    desc.add_options()("glog_path", po::value<std::string>(&glog_path)->default_value("/tmp/glog"),
+                       "The path of glog.");
 
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -787,6 +785,18 @@ int main(int argc, char** argv) {
     std::cout << "Currently not support diskann + sq" << std::endl;
     return -1;
   }
+
+  // 初始化 glog
+  google::InitGoogleLogging(argv[0]);
+
+  // 设置 glog 的输出路径为传入的日志路径
+  // FLAGS_log_dir = glog_path;
+  // LOG(INFO) << "Now the log redirect to :"<<FLAGS_log_dir;
+  FLAGS_logtostderr = false;  // 不输出到标准错误流
+  FLAGS_alsologtostderr = true;
+  FLAGS_minloglevel = 0;  // 0: INFO, 1: WARNING, 2: ERROR, 3: FATAL
+  FLAGS_log_prefix="[IWEF][hh:mm:ss.uu threadid file:line]";
+  
 
   diskann::SearchParams params;
   params.num_threads = num_threads;

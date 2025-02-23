@@ -60,7 +60,7 @@ private:
       }
     }
     
-    std::cout << "Allocated " << queue_cnt << " qpairs"<<std::endl;
+    LOG(INFO)<<"Allocated " << queue_cnt << " qpairs";
   }
 
   // void Init2() {
