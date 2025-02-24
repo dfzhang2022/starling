@@ -22,6 +22,21 @@ namespace diskann {
   }
 
   }
+  void cb_in_queryIO_way(void *ctx, const struct spdk_nvme_cpl *cpl) {
+    if ((spdk_nvme_cpl_is_error(cpl))) {
+      std::cout << "I/O error status: "
+                 << spdk_nvme_cpl_get_status_string(&cpl->status);
+    }else{
+    QueryIO *p = (QueryIO *)ctx;
+    p->completed++;
+    if(p->completed == p->io_num){
+      p->complete_from_spdk();
+    }
+    p->ptr_to_atomic_flag->fetch_add(1);
+  }
+
+  }
+
 
   void thread_stat_print(ThreadStats* thread_stat, bool is_coro = false){
     std::cout << "in coro:"
@@ -445,6 +460,16 @@ namespace diskann {
       unsigned num_ios = 0;
       unsigned k = 0;
 
+      std::vector<float>
+          io_push_queue_time_vec;  // 生成IO请求，提交到队列的时间 = ts_beign
+      std::vector<float>
+          io_submit_time_vec;  // 通过spdk提交io时间 = now - ts_begin
+      std::vector<float>
+          io_complete_time_vec;  // 通过spdk完成io的时间 = now - ts_begin
+      std::vector<float>
+          io_resume_time_vec;  // 对应的coro恢复执行的时间 = now - ts_begin
+      std::vector<float> io_single_time_vec;
+
       // cleared every iteration
       std::vector<unsigned> frontier;
       frontier.reserve(2 * beam_width);
@@ -554,11 +579,18 @@ namespace diskann {
           // int io_return_num = co_await diskann::IORegisterAwaiter<T>((PQFlashIndex<T>*)(this), frontier_read_reqs,thread_id,coro_id,thread_stat);
           // int io_return_num = co_await diskann::NewIORegisterAwaiter<T>((PQFlashIndex<T>*)(this), frontier_read_reqs,thread_id,coro_id,thread_stat);
           int io_return_num = co_await diskann::LibaioIORegisterAwaiter<T>((PQFlashIndex<T>*)(this), frontier_read_reqs,thread_id,coro_id,thread_stat);
-          this_coro_stats->n_io_returns += io_return_num;
 
-          // for(auto item:frontier_read_reqs){
-          //   delete &item;
-          // }
+          this->query_io_per_coro[thread_id][coro_id].resume();
+
+          
+          io_single_time_vec.push_back(io_timer.elapsed());
+          io_push_queue_time_vec.push_back(this->query_io_per_coro[thread_id][coro_id].io_begin_time);
+          io_submit_time_vec.push_back(this->query_io_per_coro[thread_id][coro_id].io_submit_time);
+          io_complete_time_vec.push_back(this->query_io_per_coro[thread_id][coro_id].io_complete_time);
+          io_resume_time_vec.push_back(this->query_io_per_coro[thread_id][coro_id].io_resume_time);
+
+
+          this_coro_stats->n_io_returns += io_return_num;
 
           coro_timer.reset();
           thread_timer.reset();
@@ -699,11 +731,14 @@ namespace diskann {
       }
       if (this_coro_stats != nullptr) {
         this_coro_stats->total_us = (double) query_timer.elapsed();
-      }
-      if (this_coro_stats != nullptr) {
         this_coro_stats->executing_in_coro_us += (double) coro_timer.elapsed();
+
+        this_coro_stats->mean_io_push_queue_time = get_mean_vec(io_push_queue_time_vec);
+        this_coro_stats->mean_io_submit_time = get_mean_vec(io_submit_time_vec);
+        this_coro_stats->mean_io_complete_time = get_mean_vec(io_complete_time_vec);
+        this_coro_stats->mean_io_resume_time = get_mean_vec(io_resume_time_vec);
+        this_coro_stats->mean_io_time = get_mean_vec(io_single_time_vec);
       }
-      thread_stat->executing_in_coro_us += (double) coro_timer.elapsed();
     }  // end for
     co_return;
   }
@@ -837,7 +872,7 @@ namespace diskann {
         thread_stat->scheduler_total_us+=all_timer.elapsed();
         thread_stat->scheduler_cpu_us+=cpu_timer.elapsed();
         // std::cout<<"Before resume."<<std::endl;
-        float io_complete_time = query_io_per_coro[thread_id][coro_id].get_elapsed_time();
+        // float io_complete_time = query_io_per_coro[thread_id][coro_id].get_elapsed_time();
         handles_map[thread_id][coro_id].resume();
         // std::cout<<"After resume."<<std::endl;
         all_timer.reset();
@@ -1508,7 +1543,7 @@ namespace diskann {
       std::string thread_name = "LIBAIO-ISSUE-IO" + std::to_string(i);
       if (verbose_)
         std::cout << thread_name << std::endl;
-      std::thread t(&PQFlashIndex<T>::libaio_issue_io_thread, this,i,thread_stats + i, i-this->max_nthreads,issue_io_thread_num);
+      std::thread t(&PQFlashIndex<T>::spdk_issue_io_thread, this,i,thread_stats + i, i-this->max_nthreads,issue_io_thread_num);
 
       pthread_t pthread_handle =
           *reinterpret_cast<pthread_t *>(t.native_handle());
@@ -2039,7 +2074,7 @@ template<typename T>
             int cnt = 0;
             io_uring* ring_ptr = this->get_iouring(k,0);
 
-            for (size_t idx = 0; idx < result; idx++) {
+            for (int idx = 0; idx < result; idx++) {
               // AlignedRead *tmp_ptr = &iter_read[idx];
               AlignedRead *tmp_ptr = new AlignedRead(iter_read[idx]);
               // AlignedRead *tmp_ptr = tmp_vec[idx];
@@ -2077,7 +2112,7 @@ template<typename T>
     return;
   }
   template<typename T>
-  void PQFlashIndex<T>::libaio_issue_io_thread(int io_thread_id,ThreadStats* thread_stat,int this_thread_idx, int io_thread_num) {
+  void PQFlashIndex<T>::spdk_issue_io_thread(int io_thread_id,ThreadStats* thread_stat,int this_thread_idx, int io_thread_num) {
     // 绑定线程核心 到最大工作线程数加1的位置
     // std::this_thread::sleep_for(std::chrono::milliseconds(10));
     cpu_set_t mask;
@@ -2101,7 +2136,7 @@ template<typename T>
 
     while(true){
         if( (this->executing_thread_num == 0) ){
-          thread_stat->cpu_us += cpu_timer.elapsed();
+          
           break;
         }
         std::vector<AlignedRead> collections;
@@ -2109,17 +2144,20 @@ template<typename T>
         std::vector<std::pair<int,int>> collect_coro_id;
 
         int pop_cnt = 0;
-        while(this->bqann_io_queue.size_approx() > 0 && pop_cnt < 512){
+        
+        while(this->bqann_io_queues[this_thread_idx].size_approx() > 0 && pop_cnt < 512){
+          cpu_timer.reset();
           std::pair<int,int> tmp_pair;
-          this->bqann_io_queue.try_dequeue(tmp_pair);
+          this->bqann_io_queues[this_thread_idx].try_dequeue(tmp_pair);
           int thread_id = tmp_pair.first;
           int coro_id = tmp_pair.second;
-          float io_submit_time = this->query_io_per_coro[thread_id][coro_id].get_elapsed_time();
           for(auto item: query_io_per_coro[thread_id][coro_id].aligned_read_vec){
             collections.emplace_back(item);
           }
+          this->query_io_per_coro[thread_id][coro_id].submit_to_spdk();
           collect_coro_id.emplace_back(thread_id,coro_id);
           pop_cnt++;
+          thread_stat->cpu_us += cpu_timer.elapsed();
         }
         
         // for (size_t thread_idx = this_thread_idx; thread_idx < max_nthreads; thread_idx+=io_thread_num) {
@@ -2150,12 +2188,16 @@ template<typename T>
         allReadNum += allNum;
         thread_stat->compute_us += wait_timer.elapsed();
 
+        io_timer.reset();
         if (collections.size() > 0) {
           // std::cout << "collections.size() = " << collections.size()<<std::endl;
-          io_timer.reset();
           wait_timer.reset();
           for(auto item : collections){
-            spdk_reader->SubmitRead4K(item,&cb,&atomic_mark[item.thread_id * max_ncoroutines + item.coro_id],this_thread_idx);
+            // spdk_reader->SubmitRead4K(item,&cb,&atomic_mark[item.thread_id * max_ncoroutines + item.coro_id],this_thread_idx);
+            spdk_reader->SubmitRead4K(
+                item, &cb_in_queryIO_way,
+                &query_io_per_coro[item.thread_id][item.coro_id],
+                this_thread_idx);
             thread_stat->n_ios++;
           }
           thread_stat->io_submit_us += wait_timer.elapsed();
@@ -2180,7 +2222,7 @@ template<typename T>
           }
         }
         thread_stat->io_reap_us += wait_timer.elapsed();
-        thread_stat->io_us += wait_timer.elapsed();
+        thread_stat->io_us += io_timer.elapsed();
     }
     thread_stat->total_us += all_timer.elapsed();
     LOG(INFO) << "[SPDK Issue IO Thread] dupRate: "<<(double)uniqueReadNum/allReadNum<<" distinct ios: "<<uniqueReadNum<<", total ios: "<<allReadNum;

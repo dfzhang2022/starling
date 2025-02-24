@@ -32,23 +32,32 @@ namespace diskann {
     }
   };
   struct QueryStats {
-    float total_us = 0;  // total time to process query in micros
-    float io_us = 0;     // total time spent in IO
-    float cpu_us = 0;    // total time spent in CPU
-    float executing_in_coro_us = 0;    // total time spent in coro
+    float total_us = 0;              // total time to process query in micros
+    float io_us = 0;                 // total time spent in IO
+    float cpu_us = 0;                // total time spent in CPU
+    float executing_in_coro_us = 0;  // total time spent in coro
     float bubble_time_us = 0;
 
-    unsigned n_4k = 0;          // # of 4kB reads
-    unsigned n_8k = 0;          // # of 8kB reads
-    unsigned n_12k = 0;         // # of 12kB reads
-    unsigned n_ios = 0;         // total # of IOs issued
-    unsigned n_io_returns = 0;  // total # of IOs uring returned
-    unsigned read_size = 0;     // total # of bytes read
-    unsigned n_cmps_saved = 0;  // # cmps saved
-    unsigned n_cmps = 0;        // # cmps
-    unsigned n_cache_hits = 0;  // # cache_hits
-    unsigned n_hops = 0;        // # search hops
-    unsigned n_affinity_cache = 0; // # affinity nodes 
+
+    float mean_io_time;             // 单个io请求端到端时间
+    float mean_io_push_queue_time;  // #生成IO请求，提交到队列的时间 = ts_beign
+    float mean_io_submit_time;      // #通过spdk提交io时间 = now - ts_begin
+    float mean_io_complete_time;    // #通过spdk完成io的时间 = now - ts_begin
+    float mean_io_resume_time;      // 对应的coro恢复执行的时间 = now - ts_begin
+
+    unsigned n_4k = 0;              // # of 4kB reads
+    unsigned n_8k = 0;              // # of 8kB reads
+    unsigned n_12k = 0;             // # of 12kB reads
+    unsigned n_ios = 0;             // total # of IOs issued
+    unsigned n_io_returns = 0;      // total # of IOs uring returned
+    unsigned read_size = 0;         // total # of bytes read
+    unsigned n_cmps_saved = 0;      // # cmps saved
+    unsigned n_cmps = 0;            // # cmps
+    unsigned n_cache_hits = 0;      // # cache_hits
+    unsigned n_hops = 0;            // # search hops
+    unsigned n_affinity_cache = 0;  // # affinity nodes
+    
+
 
     std::vector<BlockVisited> block_visited_queue;
   };
@@ -102,6 +111,16 @@ namespace diskann {
     double avg = 0;
     for (uint64_t i = 0; i < len; i++) {
       avg += (double) member_fn(stats[i]);
+    }
+    return avg / len;
+  }
+
+  template<typename T>
+  inline double get_mean_vec(std::vector<T> &vec) {
+    double avg = 0;
+    size_t len = vec.size();
+    for (size_t i = 0; i < len; i++) {
+      avg += (double) vec[i];
     }
     return avg / len;
   }

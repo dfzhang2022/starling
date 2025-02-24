@@ -55,7 +55,9 @@ struct IOContext {
 #include <thread>
 #include "tsl/robin_map.h"
 #include "utils.h"
+#include "timer.h"
 
+using diskann::Timer;
 // NOTE :: all 3 fields must be 512-aligned
 struct AlignedRead {
   uint64_t offset;  // where to read from
@@ -69,7 +71,7 @@ struct AlignedRead {
   typedef std::chrono::high_resolution_clock _clock;
   std::chrono::time_point<_clock>            begin_ts;
 
-  Timer timer;
+  diskann::Timer timer;
   void begin_submit(){
     timer.reset();
   }
@@ -121,11 +123,20 @@ struct AlignedRead {
 
 struct QueryIO{
   std::vector<AlignedRead> aligned_read_vec;
+  size_t io_num;
+  size_t completed;
   int thread_id;
   int coro_id;
   bool valid = false;
+  std::atomic<int>* ptr_to_atomic_flag = nullptr;
 
-  Timer timer;
+  diskann::Timer timer;
+
+  float io_begin_time = 0;
+  float io_submit_time = 0;
+  float io_complete_time = 0;
+  float io_resume_time = 0;
+
 
   QueryIO(){
     thread_id = -1;
@@ -137,6 +148,18 @@ struct QueryIO{
 
   void begin_submit(){
     timer.reset();
+    io_begin_time = timer.elapsed();
+  }
+
+  void submit_to_spdk(){
+    io_submit_time = timer.elapsed();
+  }
+
+  void complete_from_spdk(){
+    io_complete_time = timer.elapsed();
+  }
+  void resume(){
+    io_resume_time = timer.elapsed();
   }
 
   float get_elapsed_time(){

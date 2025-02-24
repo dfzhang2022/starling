@@ -52,6 +52,12 @@ private:
     std::cout << "Initialization complete"<<std::endl;
 
     for (auto &ns_entry : g_namespaces_) {
+      uint64_t flags = spdk_nvme_ctrlr_get_flags(ns_entry.ctrlr);
+      if (flags & SPDK_NVME_CTRLR_WRR_SUPPORTED) {
+        LOG(INFO) << "WRR is supported by this NVMe controller.\n";
+      } else {
+        LOG(INFO) << "WRR is NOT supported by this NVMe controller.\n";
+      }
       for(int i = 0; i < queue_cnt; i++){
         ns_entry.qpair[i] = spdk_nvme_ctrlr_alloc_io_qpair(ns_entry.ctrlr, NULL, 0);
 
@@ -188,10 +194,10 @@ private:
     }
   }
   void BatchSyncRead(std::vector<AlignedRead>& read_vec, int qp_id) override {
-    size_t io_size = read_vec.size();
+    int io_size = read_vec.size();
 
     std::atomic<int> counter{io_size};
-    for (size_t i = 0; i < io_size; i++) {
+    for (int i = 0; i < io_size; i++) {
       SubmitReadCommand(read_vec[i].buf, read_vec[i].len, read_vec[i].block_id,
                         BatchSyncCommandCompleteCB, &counter, 0);
     }
@@ -309,7 +315,7 @@ private:
                             const struct spdk_nvme_transport_id *trid,
                             struct spdk_nvme_ctrlr_opts *opts) {
     if(strcmp(using_ssd, trid->traddr) != 0){
-      CHECK_EQ(using_ssd, trid->traddr)<<"spdk using "<<using_ssd;
+      // CHECK_EQ(using_ssd, trid->traddr)<<"spdk using "<<using_ssd;
       return false;
     }
     LOG(INFO)<< "Attaching to " << trid->traddr;

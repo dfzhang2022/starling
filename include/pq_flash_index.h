@@ -230,8 +230,11 @@ namespace diskann {
       libaio_cnt[thread_id][coro_id] = submit_num;
       atomic_mark[thread_id*max_ncoroutines+coro_id]=0;
       query_io_per_coro[thread_id][coro_id].valid = true;
+      query_io_per_coro[thread_id][coro_id].completed = 0;
+      query_io_per_coro[thread_id][coro_id].io_num = submit_num;      
+      query_io_per_coro[thread_id][coro_id].ptr_to_atomic_flag = &atomic_mark[thread_id*max_ncoroutines+coro_id];
       query_io_per_coro[thread_id][coro_id].begin_submit();
-      this->bqann_io_queue.enqueue({thread_id, coro_id});
+      this->bqann_io_queues[thread_id%io_nthreads].enqueue({thread_id, coro_id});
       // int sub_num = reader->submit_reqs(read_reqs,ctx_vec[thread_id][coro_id]);
       // reader->get_events(ctx_vec[thread_id][coro_id],
       //   sub_num);
@@ -358,7 +361,7 @@ namespace diskann {
     void io_thread(int io_thread_id, ThreadStats *thread_stat = nullptr);
     void issue_io_thread(int io_thread_id, ThreadStats *thread_stat = nullptr,int this_thread_idx = 0, int io_thread_num = 1);
     void reap_io_thread(int io_thread_id, ThreadStats *thread_stat = nullptr);
-    void libaio_issue_io_thread(int io_thread_id, ThreadStats *thread_stat = nullptr,int this_thread_idx = 0, int io_thread_num = 1);
+    void spdk_issue_io_thread(int io_thread_id, ThreadStats *thread_stat = nullptr,int this_thread_idx = 0, int io_thread_num = 1);
     void libaio_reap_io_thread(int io_thread_id, ThreadStats *thread_stat = nullptr,int this_thread_idx = 0, int io_thread_num = 1);
 
     cppcoro::task<void> query_coro(const T *query, const size_t _query_num,
@@ -522,7 +525,7 @@ namespace diskann {
 
     std::vector<ConcurrentQueue<AlignedRead> *> batch_read_queue_thread;
     std::vector<moodycamel::ConcurrentQueue<AlignedRead*> *> q;
-    moodycamel::ConcurrentQueue<std::pair<int,int>> bqann_io_queue;
+    std::vector <moodycamel::ConcurrentQueue<std::pair<int,int>>> bqann_io_queues;
 
     std::vector<std::vector<IORequestState>> io_state;
     // std::vector<std::vector<std::atomic<int>>> atomic_mark(MAX_WORKER_THREAD,std::vector<std::atomic<int>>(MAX_WORKER_THREAD));

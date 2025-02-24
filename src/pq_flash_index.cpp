@@ -249,6 +249,7 @@ namespace diskann {
       this->q.emplace_back(new moodycamel::ConcurrentQueue<AlignedRead*>());
     }
 
+
     this->handles_map.resize(nthreads);
     for (size_t k = 0; k < nthreads; k++) {
       this->handles_map[k].resize(max_ncoroutines);
@@ -276,6 +277,9 @@ namespace diskann {
         atomic_mark[k*max_ncoroutines + t] = 2;
       }
     }
+
+    LOG(INFO) << "bqann_io_queues resize to "<<this->io_nthreads;
+    this->bqann_io_queues.resize(this->io_nthreads);
 
     auto result = io_uring_queue_init(1024, &ring_, 0);
     if (result != 0) {
@@ -1002,7 +1006,7 @@ namespace diskann {
     // open AlignedFileReader handle to index_file
     std::string index_fname(disk_index_file);
     if(!use_bq_search_){
-      index_fname="/dev/nvme2n1";
+      index_fname="/dev/nvme0n1";
     }
     LOG(WARNING) << "Be careful the actual index file opened is: " << index_fname << std::endl;
     reader->open(index_fname);

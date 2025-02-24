@@ -205,7 +205,7 @@ int search_disk_index(
 
   std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = nullptr;
   if(use_coro){
-    spdk_reader = ssdps::SpdkWrapper::create(4);
+    spdk_reader = ssdps::SpdkWrapper::create(params.issue_io_thread_num);
     spdk_reader->Init();
   }
   
@@ -463,7 +463,29 @@ int search_disk_index(
     auto n_aff_cache_nodes = diskann::get_mean_stats<unsigned>(
         stats, query_num,
         [](const diskann::QueryStats& stats) { return stats.n_affinity_cache; });
-    
+
+    auto mean_io_push_queue_time = get_mean_stats<float>(
+        stats, query_num, [](const diskann::QueryStats& stats) {
+          return stats.mean_io_push_queue_time;
+        });
+    auto mean_io_submit_time = get_mean_stats<float>(
+        stats, query_num, [](const diskann::QueryStats& stats) {
+          return stats.mean_io_submit_time;
+        });
+    auto mean_io_complete_time = get_mean_stats<float>(
+        stats, query_num, [](const diskann::QueryStats& stats) {
+          return stats.mean_io_complete_time;
+        });
+    auto mean_io_resume_time = get_mean_stats<float>(
+        stats, query_num, [](const diskann::QueryStats& stats) {
+          return stats.mean_io_resume_time;
+        });
+
+    auto mean_single_io_time  = get_mean_stats<float>(
+      stats, query_num, [](const diskann::QueryStats& stats) {
+        return stats.mean_io_time;
+      });
+
     float iops = (1.0 * sum_ios) / (1.0 * diff.count());
 
     float recall = 0;
@@ -554,6 +576,20 @@ int search_disk_index(
 
   diskann::cout << "Bubble time proportion is:"
                 << mean_bubble_time_us / mean_latency << std::endl;
+
+  diskann::cout << "IO time structure is:"<<std::endl
+                // << std::setw(12) << "Total IO (us)"
+                << std::setw(12) << "Single IO (us)"
+                << std::setw(12) << "push2q"
+                << std::setw(12) << "submit"
+                << std::setw(12) << "complete"
+                << std::setw(12) << "resume"<<std::endl;
+  diskann::cout << std::setw(12) << mean_single_io_time
+                << std::setw(12) << mean_io_push_queue_time
+                << std::setw(12) << mean_io_submit_time
+                << std::setw(12) << mean_io_complete_time
+                << std::setw(12) << mean_io_resume_time
+                << std::endl;
 
   {
     // save block path
