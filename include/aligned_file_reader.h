@@ -130,12 +130,16 @@ struct QueryIO{
   bool valid = false;
   std::atomic<int>* ptr_to_atomic_flag = nullptr;
 
+  size_t weight = 1; // # num > 1: high priority, 1: low priority
+
   diskann::Timer timer;
 
   float io_begin_time = 0;
   float io_submit_time = 0;
   float io_complete_time = 0;
   float io_resume_time = 0;
+
+  std::vector<float> seperate_complete;
 
 
   QueryIO(){
@@ -144,6 +148,14 @@ struct QueryIO{
     aligned_read_vec.clear();
     timer.reset();
     CHECK_EQ(aligned_read_vec.size(), 0)<< "QueryIO init, but read_vec not empty";
+  }
+  void reset_timer(){
+    seperate_complete.clear();
+    timer.reset();
+  }
+
+  void add_one_complete(){
+    seperate_complete.push_back(timer.elapsed());
   }
 
   void begin_submit(){

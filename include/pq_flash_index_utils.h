@@ -87,8 +87,12 @@ namespace diskann {
     size_t coro_size = 8;
     size_t coro_io_nthreads = 0;
     size_t issue_io_thread_num = 1;
+    float weight_ratio = 0.1;
 
     // IO related.
     bool pure_io = false;
+
+    // SSD device name for starling
+    std::string ssd_device_name;
   };
 }  // namespace

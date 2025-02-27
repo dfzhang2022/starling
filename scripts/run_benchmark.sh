@@ -7,10 +7,7 @@ source config_local.sh
 
 HOME=/home/user/dfzhang
 
-PCI_ADDR=0000:a1:00.0
-PCI_BLOCKED_ADDR=0000:c3:00.0
-# PCI_ADDR="0000:c2:00.0"
-ssd_device_name=/dev/nvme2n1
+
 
 SOURCE_CODE_PATH=${HOME}/starling
 SPDK_PATH=${HOME}/spdk
@@ -320,8 +317,17 @@ case $2 in
       pwd
       HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} PCI_BLOCKED=${PCI_BLOCKED_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh reset
       popd
+      # udevadm info --query=all --name=${ssd_device_name} | grep -q "ID_PATH=pci-0000:a1:00.0" && echo "PCI address matches" || echo "PCI address does not match"
+      udevadm info --query=all --name=${ssd_device_name} | grep -q "ID_PATH=pci-${PCI_ADDR}"
+      if [ $? -eq 0 ]; then
+          echo "PCI address matches"
+      else
+          echo "PCI address does not match"
+          exit 1
+      fi
       echo "Using Page Search"
       CORO_SIZE_LIST=(0)
+      IO_ISSUE_THREAD_NUM=0
     fi
     if [ $USE_PAGE_SEARCH -eq 1 ]; then
       if [ ! -f ${INDEX_PREFIX_PATH}_partition.bin ]; then
@@ -347,7 +353,7 @@ case $2 in
           do
             for coro_sz in ${CORO_SIZE_LIST[@]}
             do
-              SEARCH_LOG=${INDEX_PREFIX_PATH}search/search_L${LS}_BW${BW}_T${T}_K${K}_PS${USE_PAGE_SEARCH}_PIPE${PIPELINE}_CORO${USE_CORO}_COROSZ${coro_sz}_USE_RATIO${PS_USE_RATIO}_PUREIO${PURE_IO}.log
+              SEARCH_LOG=${INDEX_PREFIX_PATH}search/L${LS}_BW${BW}_T${T}_K${K}_CORO${USE_CORO}_COROSZ${coro_sz}_ION${IO_ISSUE_THREAD_NUM}_PS${USE_PAGE_SEARCH}_PIPE${PIPELINE}_RATIO${PS_USE_RATIO}_PUREIO${PURE_IO}.log
               echo "Searching... log file: ${SEARCH_LOG}"
               sync; echo 3 | sudo tee /proc/sys/vm/drop_caches; 
               # numactl --physcpubind=0-72 
@@ -374,6 +380,7 @@ case $2 in
                 --pure_io  ${PURE_IO}    \
                 --query_num ${QUERY_NUM}  \
                 --issue_io_thread_num ${IO_ISSUE_THREAD_NUM} \
+                --ssd_device_name ${ssd_device_name} \
                 --glog_path=${INDEX_PREFIX_PATH}search/ > ${SEARCH_LOG} 
               log_arr+=( ${SEARCH_LOG} )
               echo "search end."

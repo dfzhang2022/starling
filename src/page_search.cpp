@@ -45,14 +45,18 @@ namespace diskann {
     // 绑定线程核心
     cpu_set_t mask;
     CPU_ZERO(&mask);
-    CPU_SET(thread_id, &mask);
+    CPU_SET(thread_id  + BEGIN_BIND_CORE_ID, &mask);
     if (sched_setaffinity(0, sizeof(mask), &mask) == -1) {
       std::cout << "Could not set CPU affinity" << std::endl;
     }
 
     Timer all_timer;
     all_timer.reset();
-    for (size_t q_id = thread_id;; q_id = q_id + max_nthreads) {
+    size_t q_id = -1;
+    // for (size_t q_id = thread_id;; q_id = q_id + max_nthreads) {
+    while(true){
+      q_id = next_qid++;
+      
       if (q_id >= query_num) {
         thread_stat->total_us += all_timer.elapsed();
         return;

@@ -64,8 +64,9 @@ GP_CUT=4096 # the graph's degree will been limited at 4096
 #   Search   #
 ##############
 BM_LIST=(8)
+# T_LIST=(20 32 36 40 48)
+# T_LIST=(16 20 24 28 32 36 40 48)
 T_LIST=(32)
-# T_LIST=(2 4 8 16 20 24 28 32 )
 CACHE=0
 MEM_L=0 # non-zero to enable
 
@@ -75,16 +76,18 @@ PIPELINE=1
 PS_USE_RATIO=0.3
 
 
-USE_CORO=0
-# CORO_SIZE=8
-CORO_SIZE_LIST=(10)
-
-IO_ISSUE_THREAD_NUM=2
+USE_CORO=1
+CORO_SIZE_LIST=(2)
+WRR_WEIGHT_RATIO=0.1
+IO_ISSUE_THREAD_NUM=4
 
 PURE_IO=0
 
 QUERY_NUM=10000
 
+PCI_ADDR=0000:a1:00.0
+PCI_BLOCKED_ADDR=0000:c3:00.0
+ssd_device_name=/dev/nvme0n1
 
 
 

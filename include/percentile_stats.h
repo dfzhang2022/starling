@@ -9,6 +9,7 @@
 #include <functional>
 #include <algorithm>
 #include <chrono>
+#include <math.h>
 #ifdef _WINDOWS
 #include <numeric>
 #endif
@@ -43,6 +44,9 @@ namespace diskann {
     float mean_io_push_queue_time;  // #生成IO请求，提交到队列的时间 = ts_beign
     float mean_io_submit_time;      // #通过spdk提交io时间 = now - ts_begin
     float mean_io_complete_time;    // #通过spdk完成io的时间 = now - ts_begin
+    float mean_mean_io_complete_time;
+    float mean_min_io_complete_time;
+    float mean_max_io_complete_time;
     float mean_io_resume_time;      // 对应的coro恢复执行的时间 = now - ts_begin
 
     unsigned n_4k = 0;              // # of 4kB reads
@@ -56,6 +60,9 @@ namespace diskann {
     unsigned n_cache_hits = 0;      // # cache_hits
     unsigned n_hops = 0;            // # search hops
     unsigned n_affinity_cache = 0;  // # affinity nodes
+
+
+    unsigned weight = 0;
     
 
 
@@ -109,10 +116,15 @@ namespace diskann {
       QueryStats *stats, uint64_t len,
       const std::function<T(const QueryStats &)> &member_fn) {
     double avg = 0;
+    uint64_t actual_cnt = 0;
     for (uint64_t i = 0; i < len; i++) {
-      avg += (double) member_fn(stats[i]);
+      double member = (double) member_fn(stats[i]);
+      if(member > 0){
+        avg += member;
+        actual_cnt++;
+      }
     }
-    return avg / len;
+    return avg / actual_cnt;
   }
 
   template<typename T>
@@ -123,6 +135,15 @@ namespace diskann {
       avg += (double) vec[i];
     }
     return avg / len;
+  }
+  template<typename T>
+  inline double get_min_vec(std::vector<T> &vec) {
+    double min = MAXFLOAT;
+    size_t len = vec.size();
+    for (size_t i = 0; i < len; i++) {
+      min = min <= vec[i]?min:vec[i];
+    }
+    return min;
   }
 
   template<typename T>
