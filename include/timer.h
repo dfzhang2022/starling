@@ -1,5 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license.
+#pragma once
+#ifndef TIMER_H
+#define TIMER_H
 
 #include <chrono>
 
@@ -23,3 +26,5 @@ namespace diskann {
     }
   };
 }  // namespace diskann
+
+#endif  // TIMER_H

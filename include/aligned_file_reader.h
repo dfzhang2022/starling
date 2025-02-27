@@ -55,7 +55,9 @@ struct IOContext {
 #include <thread>
 #include "tsl/robin_map.h"
 #include "utils.h"
+#include "timer.h"
 
+using diskann::Timer;
 // NOTE :: all 3 fields must be 512-aligned
 struct AlignedRead {
   uint64_t offset;  // where to read from
@@ -68,6 +70,15 @@ struct AlignedRead {
 
   typedef std::chrono::high_resolution_clock _clock;
   std::chrono::time_point<_clock>            begin_ts;
+
+  diskann::Timer timer;
+  void begin_submit(){
+    timer.reset();
+  }
+
+  float get_execute_time(){
+    return timer.elapsed();
+  }
 
   AlignedRead() : offset(0), len(0), buf(nullptr) {
   }
@@ -106,6 +117,65 @@ struct AlignedRead {
   }
   void print(){
     std::cout<<block_id<<","<<thread_id<<","<<coro_id<<std::endl;
+  }
+};
+
+
+struct QueryIO{
+  std::vector<AlignedRead> aligned_read_vec;
+  size_t io_num;
+  size_t completed;
+  int thread_id;
+  int coro_id;
+  bool valid = false;
+  std::atomic<int>* ptr_to_atomic_flag = nullptr;
+
+  size_t weight = 1; // # num > 1: high priority, 1: low priority
+
+  diskann::Timer timer;
+
+  float io_begin_time = 0;
+  float io_submit_time = 0;
+  float io_complete_time = 0;
+  float io_resume_time = 0;
+
+  std::vector<float> seperate_complete;
+
+
+  QueryIO(){
+    thread_id = -1;
+    coro_id = -1;
+    aligned_read_vec.clear();
+    timer.reset();
+    CHECK_EQ(aligned_read_vec.size(), 0)<< "QueryIO init, but read_vec not empty";
+  }
+  void reset_timer(){
+    seperate_complete.clear();
+    timer.reset();
+  }
+
+  void add_one_complete(){
+    seperate_complete.push_back(timer.elapsed());
+  }
+
+  void begin_submit(){
+    timer.reset();
+    io_begin_time = timer.elapsed();
+  }
+
+  void submit_to_spdk(){
+    io_submit_time = timer.elapsed();
+  }
+
+  void complete_from_spdk(){
+    io_complete_time = timer.elapsed();
+  }
+  void resume(){
+    io_resume_time = timer.elapsed();
+  }
+
+  float get_elapsed_time(){
+    return timer.elapsed();
   }
 };
 

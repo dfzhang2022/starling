@@ -45,14 +45,18 @@ namespace diskann {
     // 绑定线程核心
     cpu_set_t mask;
     CPU_ZERO(&mask);
-    CPU_SET(thread_id, &mask);
+    CPU_SET(thread_id  + BEGIN_BIND_CORE_ID, &mask);
     if (sched_setaffinity(0, sizeof(mask), &mask) == -1) {
       std::cout << "Could not set CPU affinity" << std::endl;
     }
 
     Timer all_timer;
     all_timer.reset();
-    for (size_t q_id = thread_id;; q_id = q_id + max_nthreads) {
+    size_t q_id = -1;
+    // for (size_t q_id = thread_id;; q_id = q_id + max_nthreads) {
+    while(true){
+      q_id = next_qid++;
+      
       if (q_id >= query_num) {
         thread_stat->total_us += all_timer.elapsed();
         return;
@@ -285,6 +289,12 @@ namespace diskann {
     unsigned num_ios = 0;
     unsigned k = 0;
 
+    std::vector<float>
+        io_submit_time_vec;  // 通过libaio提交io时间 = now - ts_begin
+    std::vector<float>
+        io_complete_time_vec;  // 通过libaio完成io的时间 = now - ts_begin
+    std::vector<float> io_single_time_vec;
+
     // cleared every iteration
     std::vector<unsigned> frontier;
     frontier.reserve(2 * beam_width);
@@ -418,9 +428,12 @@ namespace diskann {
 
         io_timer.reset();
 
-  if(verbose_){      size_t coro_size = frontier_read_reqs.size();
-        std::cout<<"Begin"<<std::endl;
-        std::cout<<coro_size<<std::endl;}
+        if (verbose_) {
+          size_t coro_size = frontier_read_reqs.size();
+          std::cout << "Begin" << std::endl;
+          std::cout << coro_size << std::endl;
+        }
+        io_submit_time_vec.push_back(io_timer.elapsed());
         n_ops = reader->submit_reqs(frontier_read_reqs, ctx);
         if (this->count_visited_nodes) {
 #pragma omp critical
@@ -484,14 +497,12 @@ namespace diskann {
       // get last submitted io results, blocking
       if (!frontier.empty()) {
         reader->get_events(ctx, n_ops);
-        if (verbose_) {
-          std::cout << io_timer.elapsed() << std::endl;
-          std::cout << "End" << std::endl;
-        }
-
         if (stats != nullptr) {
           stats->bubble_time_us +=  (double) bubble_timer.elapsed();
-          stats->io_us += (double) io_timer.elapsed();
+          float io_time = io_timer.elapsed();
+          io_single_time_vec.push_back(io_time);
+          io_complete_time_vec.push_back(io_time);
+          stats->io_us += io_time;
           for (auto item : block_visited_in_this_iter) {
             stats->block_visited_queue.push_back(BlockVisited(
                 item.block_id, std::chrono::high_resolution_clock::now()));
@@ -606,6 +617,9 @@ namespace diskann {
     if (stats != nullptr) {
       stats->total_us = (double) query_timer.elapsed();
       stats->cpu_us += (double) cpu_timer.elapsed();
+      stats->mean_io_submit_time = get_mean_vec(io_submit_time_vec);
+      stats->mean_io_complete_time = get_mean_vec(io_complete_time_vec);
+      stats->mean_io_time = get_mean_vec(io_single_time_vec);
     }
   }
 

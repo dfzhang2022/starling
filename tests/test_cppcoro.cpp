@@ -1157,7 +1157,7 @@ int main(int argc, char* argv[]) {
   //   SPDK_MALLOC_DMA);
   // spdk_reader->SyncRead(sector_scratch,LBA_SIZE,0,0);
 
-  float a = 0,b = 0,c = 0;
+  // float a = 0,b = 0,c = 0;
   // multithread_libaio_spdk(a,b,c);
   // writeIndexToSPDK("/data/dataset/indices/bigann_100m_M200_R64_L100_B5/_disk.index",spdk_reader.get());
   writeIndexToSPDK("/data/dataset/indices/bigann_100m_M200_R64_L100_B5/_disk.index",spdk_reader.get());

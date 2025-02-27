@@ -7,7 +7,7 @@ source config_local.sh
 
 HOME=/home/user/dfzhang
 
-PCI_ADDR="0000:a1:00.0"
+
 
 SOURCE_CODE_PATH=${HOME}/starling
 SPDK_PATH=${HOME}/spdk
@@ -46,17 +46,22 @@ case $1 in
     cmake -DCMAKE_BUILD_TYPE=Release .. -B ../release
     EXE_PATH=${SOURCE_CODE_PATH}/release
   ;;
+  dd)
+    echo "${INDICES_PATH}/${INDEX_PREFIX_PATH}_disk.index to ${ssd_device_name}"
+    pv ${INDICES_PATH}/${INDEX_PREFIX_PATH}_disk.index | dd of=${ssd_device_name} bs=4096 conv=fdatasync
+    exit 1
+  ;;
   set)
     pushd ${SPDK_PATH} 
     pwd
-    HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh
+    HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} PCI_BLOCKED=${PCI_BLOCKED_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh
     popd
     exit 1
   ;;
   reset)
     pushd ${SPDK_PATH} 
     pwd
-    HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh reset
+    HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} PCI_BLOCKED=${PCI_BLOCKED_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh reset
     popd
     exit 1
   ;;
@@ -304,15 +309,25 @@ case $2 in
     if [ $USE_CORO -eq 1 ]; then
       pushd ${SPDK_PATH} 
       pwd
-      HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh
+      HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} PCI_BLOCKED=${PCI_BLOCKED_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh
       popd
       echo "Using Coro"
     else
       pushd ${SPDK_PATH} 
       pwd
-      HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh reset
+      HUGEMEM=8192  HUGE_EVEN_ALLOC=yes PCI_ALLOWED=${PCI_ADDR} PCI_BLOCKED=${PCI_BLOCKED_ADDR} CLEAR_HUGE=yes sudo -E scripts/setup.sh reset
       popd
+      # udevadm info --query=all --name=${ssd_device_name} | grep -q "ID_PATH=pci-0000:a1:00.0" && echo "PCI address matches" || echo "PCI address does not match"
+      udevadm info --query=all --name=${ssd_device_name} | grep -q "ID_PATH=pci-${PCI_ADDR}"
+      if [ $? -eq 0 ]; then
+          echo "PCI address matches"
+      else
+          echo "PCI address does not match"
+          exit 1
+      fi
       echo "Using Page Search"
+      CORO_SIZE_LIST=(0)
+      IO_ISSUE_THREAD_NUM=0
     fi
     if [ $USE_PAGE_SEARCH -eq 1 ]; then
       if [ ! -f ${INDEX_PREFIX_PATH}_partition.bin ]; then
@@ -336,51 +351,40 @@ case $2 in
         do
           for T in ${T_LIST[@]}
           do
-            SEARCH_LOG=${INDEX_PREFIX_PATH}search/search_L${LS}_BW${BW}_T${T}_K${K}_PS${USE_PAGE_SEARCH}_PIPE${PIPELINE}_CORO${USE_CORO}_COROSZ${CORO_SIZE}_USE_RATIO${PS_USE_RATIO}_PUREIO${PURE_IO}.log
-            echo "Searching... log file: ${SEARCH_LOG}"
-            # echo "${EXE_PATH}/tests/search_disk_index --data_type $DATA_TYPE \
-            #   --dist_fn $DIST_FN \
-            #   --index_path_prefix $INDEX_PREFIX_PATH \
-            #   --query_file $QUERY_FILE \
-            #   --gt_file $GT_FILE \
-            #   -K $K \
-            #   --result_path ${INDEX_PREFIX_PATH}result/result \
-            #   --num_nodes_to_cache $CACHE \
-            #   -T $T \
-            #   -L ${LS} \
-            #   -W $BW \
-            #   --mem_L ${MEM_L} \
-            #   --mem_index_path ${MEM_INDEX_PATH}_index \
-            #   --use_page_search ${USE_PAGE_SEARCH} \
-            #   --use_ratio ${PS_USE_RATIO} \
-            #   --disk_file_path ${DISK_FILE_PATH} \
-            #   --use_sq ${USE_SQ}"
-            sync; echo 3 | sudo tee /proc/sys/vm/drop_caches; 
-            # numactl --physcpubind=0-72 
-            ${EXE_PATH}/tests/search_disk_index --data_type $DATA_TYPE \
-              --dist_fn $DIST_FN \
-              --index_path_prefix $INDEX_PREFIX_PATH \
-              --query_file $QUERY_FILE \
-              --gt_file $GT_FILE \
-              -K $K \
-              --result_path ${INDEX_PREFIX_PATH}result/result \
-              --num_nodes_to_cache $CACHE \
-              -T $T \
-              -L ${LS} \
-              -W $BW \
-              --mem_L ${MEM_L} \
-              --mem_index_path ${MEM_INDEX_PATH}_index \
-              --use_page_search ${USE_PAGE_SEARCH} \
-              --use_ratio ${PS_USE_RATIO} \
-              --use_pipeline ${PIPELINE} \
-              --disk_file_path ${DISK_FILE_PATH} \
-              --use_sq ${USE_SQ}     \
-              --use_coro ${USE_CORO}    \
-              --coro_size ${CORO_SIZE} \
-              --pure_io  ${PURE_IO}    \
-              --query_num ${QUERY_NUM}  \
-              --issue_io_thread_num ${IO_ISSUE_THREAD_NUM} > ${SEARCH_LOG} 
-            log_arr+=( ${SEARCH_LOG} )
+            for coro_sz in ${CORO_SIZE_LIST[@]}
+            do
+              SEARCH_LOG=${INDEX_PREFIX_PATH}search/L${LS}_BW${BW}_T${T}_K${K}_CORO${USE_CORO}_COROSZ${coro_sz}_ION${IO_ISSUE_THREAD_NUM}_PS${USE_PAGE_SEARCH}_PIPE${PIPELINE}_RATIO${PS_USE_RATIO}_PUREIO${PURE_IO}.log
+              echo "Searching... log file: ${SEARCH_LOG}"
+              sync; echo 3 | sudo tee /proc/sys/vm/drop_caches; 
+              # numactl --physcpubind=0-72 
+              ${EXE_PATH}/tests/search_disk_index --data_type $DATA_TYPE \
+                --dist_fn $DIST_FN \
+                --index_path_prefix $INDEX_PREFIX_PATH \
+                --query_file $QUERY_FILE \
+                --gt_file $GT_FILE \
+                -K $K \
+                --result_path ${INDEX_PREFIX_PATH}result/result \
+                --num_nodes_to_cache $CACHE \
+                -T $T \
+                -L ${LS} \
+                -W $BW \
+                --mem_L ${MEM_L} \
+                --mem_index_path ${MEM_INDEX_PATH}_index \
+                --use_page_search ${USE_PAGE_SEARCH} \
+                --use_ratio ${PS_USE_RATIO} \
+                --use_pipeline ${PIPELINE} \
+                --disk_file_path ${DISK_FILE_PATH} \
+                --use_sq ${USE_SQ}     \
+                --use_coro ${USE_CORO}    \
+                --coro_size ${coro_sz} \
+                --pure_io  ${PURE_IO}    \
+                --query_num ${QUERY_NUM}  \
+                --issue_io_thread_num ${IO_ISSUE_THREAD_NUM} \
+                --ssd_device_name ${ssd_device_name} \
+                --glog_path=${INDEX_PREFIX_PATH}search/ > ${SEARCH_LOG} 
+              log_arr+=( ${SEARCH_LOG} )
+              echo "search end."
+            done
           done
         done
       ;;

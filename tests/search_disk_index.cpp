@@ -21,6 +21,7 @@
 #include "timer.h"
 #include "utils.h"
 #include "percentile_stats.h"
+#include "gen_random.h"
 
 #ifndef _WINDOWS
 #include <sys/mman.h>
@@ -37,10 +38,9 @@
 
 #define WARMUP false
 
-
 #define READ_SECTOR_LEN (size_t) 4096
 
-DEFINE_string(log_path, "./logs", "Path to log file");
+DEFINE_string(glog_path, "/tmp/logs", "Path to log file");
 DEFINE_int32(age, 0, "The age of the person");
 DEFINE_bool(is_student, false, "Whether the person is a student");
 
@@ -66,7 +66,6 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
   auto meta_pair = diskann::get_disk_index_meta(indexname);
   _u64 actual_index_size = get_file_size(indexname);
   _u64 expected_file_size, expected_npts;
-  _u64                               max_node_len;
 
   std::cout<<"Copy index file: "<<indexname<<" to spdk."<<std::endl;
 
@@ -85,7 +84,6 @@ void writeIndexToSPDK(std::string indexname, ssdps::SpdkWrapper* reader){
                   << " with meta-data size: " << expected_file_size << std::endl;
     exit(-1);
   }
-  max_node_len = meta_pair.second[3];
   unsigned nnodes_per_sector = meta_pair.second[4];
   
   _u64 file_size = READ_SECTOR_LEN + READ_SECTOR_LEN * ((expected_npts + nnodes_per_sector - 1) / nnodes_per_sector);
@@ -208,7 +206,8 @@ int search_disk_index(
 
   std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = nullptr;
   if(use_coro){
-    spdk_reader = ssdps::SpdkWrapper::create(28);
+    // spdk_reader = ssdps::SpdkWrapper::create(params.issue_io_thread_num);
+    spdk_reader = ssdps::SpdkWrapper::create(params.issue_io_thread_num*QPAIR_NUM);
     spdk_reader->Init();
   }
   
@@ -364,6 +363,12 @@ int search_disk_index(
 
     auto stats = new diskann::QueryStats[query_num];
 
+    BinaryRandomGenerator gen(params.weight_ratio);
+    size_t weight_num = 10;
+    for (size_t i = 0; i < query_num; i++) {
+      stats[i].weight = gen.generate() == 1 ? weight_num : 1;  // 5 or 1
+    }
+
     std::vector<uint64_t> query_result_ids_64(recall_at * query_num);
     auto                  s = std::chrono::high_resolution_clock::now();
     // query_num = SEARCH_QUERY;
@@ -466,7 +471,41 @@ int search_disk_index(
     auto n_aff_cache_nodes = diskann::get_mean_stats<unsigned>(
         stats, query_num,
         [](const diskann::QueryStats& stats) { return stats.n_affinity_cache; });
-    
+
+    auto mean_io_push_queue_time = get_mean_stats<float>(
+        stats, query_num, [](const diskann::QueryStats& stats) {
+          return stats.mean_io_push_queue_time;
+        });
+    auto mean_io_submit_time = get_mean_stats<float>(
+        stats, query_num, [](const diskann::QueryStats& stats) {
+          return stats.mean_io_submit_time;
+        });
+    auto mean_io_complete_time = get_mean_stats<float>(
+        stats, query_num, [](const diskann::QueryStats& stats) {
+          return stats.mean_io_complete_time;
+        });
+    auto mean_io_resume_time = get_mean_stats<float>(
+        stats, query_num, [](const diskann::QueryStats& stats) {
+          return stats.mean_io_resume_time;
+        });
+
+    auto mean_single_io_time  = get_mean_stats<float>(
+      stats, query_num, [](const diskann::QueryStats& stats) {
+        return stats.mean_io_time;
+      });
+
+    auto mean_high_weight_latency = diskann::get_mean_stats<float>(
+        stats, query_num,
+        [](const diskann::QueryStats& stats) { return stats.weight>1?stats.total_us:0; });
+
+    int High_weight_num = 0;
+    for (int i = 0; i < query_num; i++) {
+      if (stats[i].weight > 1) {
+        High_weight_num++;
+      }
+    }
+    LOG(INFO) << "High_weight_num: " << High_weight_num;
+
     float iops = (1.0 * sum_ios) / (1.0 * diff.count());
 
     float recall = 0;
@@ -502,19 +541,20 @@ int search_disk_index(
                 << ","<< "Beamwidth"
                 << ","<< "QPS"
                 << ","<< "Mean Latency"
+                << ","<< "High weight Latency"
                 << ","<< "P90 Latency"
                 << ","<< "P99.9 Latency"
                 << ","<< "IOps"
                 << ","<< "Mean IOs" 
                 << ","<< "Mean IO (us)"
                 << ","<< "CPU (us)"
-                << ","<< "Mean coro exe time (us)"
+                // << ","<< "Mean coro exe time (us)"
                 << ","<< "Mean hops"
-                << ","<< "Mean cache_hits"
-                << ","<< "Aff. cache n"
-                << ","<< "B4 Load In-Mem"
-                << ","<< "After Load Cache"
-                << ","<< "Peak Mem(MB)"
+                // << ","<< "Mean cache_hits"
+                // << ","<< "Aff. cache n"
+                // << ","<< "B4 Load In-Mem"
+                // << ","<< "After Load Cache"
+                // << ","<< "Peak Mem(MB)"
                 << "," << "Method"
                 << "," << "Coro_size"
                 << "," << "io_t_num";
@@ -528,19 +568,20 @@ int search_disk_index(
                   << "," << optimized_beamwidth
                   << ","<< qps
                   << ","<< mean_latency
+                  << ","<< mean_high_weight_latency
                   << ","<< latency_90
                   << ","<< latency_999
                   << ","<< iops
                   << ","<< mean_ios
                   << ","<< mean_ious
                   << ","<< mean_cpus
-                  << ","<< mean_coro_us
+                  // << ","<< mean_coro_us
                   << ","<< mean_hops
-                  << ","<< mean_cache_hits
-                  << ","<< n_aff_cache_nodes
-                  << ","<< load_mem
-                  << ","<< cache_mem
-                  << ","<< getProcessPeakRSS()
+                  // << ","<< mean_cache_hits
+                  // << ","<< n_aff_cache_nodes
+                  // << ","<< load_mem
+                  // << ","<< cache_mem
+                  // << ","<< getProcessPeakRSS()
                   << ","<< search_method;
   if (params.use_coro) {
     diskann::cout << ","<< params.coro_size 
@@ -558,7 +599,80 @@ int search_disk_index(
   diskann::cout << "Bubble time proportion is:"
                 << mean_bubble_time_us / mean_latency << std::endl;
 
+  diskann::cout << "IO time structure is:"<<std::endl
+                // << std::setw(12) << "Total IO (us)"
+                << std::setw(12) << "Single IO (us)"
+                << std::setw(12) << "push2q"
+                << std::setw(12) << "submit"
+                << std::setw(12) << "complete"
+                << std::setw(12) << "resume"<<std::endl;
+  diskann::cout << std::setw(12) << mean_single_io_time
+                << std::setw(12) << mean_io_push_queue_time
+                << std::setw(12) << mean_io_submit_time
+                << std::setw(12) << mean_io_complete_time
+                << std::setw(12) << mean_io_resume_time
+                << std::endl;
+  
+  diskann::cout << "Begin compute latency according to weight."<<std::endl;
+
+  mean_single_io_time = get_mean_stats<float>(
+      stats, query_num, [weight_num](const diskann::QueryStats& stats) {
+        return stats.weight == weight_num ? stats.mean_io_time : 0;
+      });
+  mean_io_push_queue_time = get_mean_stats<float>(
+      stats, query_num, [weight_num](const diskann::QueryStats& stats) {
+        return stats.weight == weight_num ? stats.mean_io_push_queue_time : 0;
+      });
+  mean_io_submit_time = get_mean_stats<float>(
+      stats, query_num, [weight_num](const diskann::QueryStats& stats) {
+        return stats.weight == weight_num ? stats.mean_io_submit_time : 0;
+      });
+  mean_io_complete_time = get_mean_stats<float>(
+      stats, query_num, [weight_num](const diskann::QueryStats& stats) {
+        return stats.weight == weight_num ? stats.mean_io_complete_time : 0;
+      });
+  auto mean_mean_io_complete_time = get_mean_stats<float>(
+      stats, query_num, [weight_num](const diskann::QueryStats& stats) {
+        return stats.weight == weight_num ? stats.mean_mean_io_complete_time
+                                          : 0;
+      });
+  auto mean_min_io_complete_time = get_mean_stats<float>(
+      stats, query_num, [weight_num](const diskann::QueryStats& stats) {
+        return stats.weight == weight_num ? stats.mean_min_io_complete_time : 0;
+      });
+  auto mean_max_io_complete_time = get_mean_stats<float>(
+      stats, query_num, [weight_num](const diskann::QueryStats& stats) {
+        return stats.weight == weight_num ? stats.mean_max_io_complete_time : 0;
+      });
+
+  mean_io_resume_time = get_mean_stats<float>(
+      stats, query_num, [weight_num](const diskann::QueryStats& stats) {
+        return stats.weight == weight_num ? stats.mean_io_resume_time : 0;
+      });
+
+  diskann::cout << "IO time structure (weight "<<weight_num<<") is:"<<std::endl
+      // << std::setw(12) << "Total IO (us)"
+      << std::setw(12) << "Single IO (us)"
+      << std::setw(12) << "push2q"
+      << std::setw(12) << "submit"
+      << std::setw(12) << "complete"
+      << std::setw(16) << "mean complete"
+      << std::setw(16) << "min complete"
+      << std::setw(16) << "max complete"
+      << std::setw(12) << "resume"<<std::endl;
+diskann::cout << std::setw(12) << mean_single_io_time
+      << std::setw(12) << mean_io_push_queue_time
+      << std::setw(12) << mean_io_submit_time
+      << std::setw(12) << mean_io_complete_time
+      << std::setw(16) << mean_mean_io_complete_time
+      << std::setw(16) << mean_min_io_complete_time
+      << std::setw(16) << mean_max_io_complete_time
+      << std::setw(12) << mean_io_resume_time
+      << std::endl;
+
   {
+    diskann::cout << "Begin block path saving."<<std::endl;
+    
     // save block path
     std::string block_path_prefix = result_output_prefix + "_block_path" +
                                     "_L" + std::to_string(L) + "_PS" +
@@ -606,8 +720,8 @@ int search_disk_index(
       outFile.close();
       outFile_no_ts.close();
     }
-      
-    }
+    diskann::cout << "Done."<<std::endl;
+  }
 
     delete[] stats;
   }
@@ -638,7 +752,7 @@ int search_disk_index(
 
 int main(int argc, char** argv) {
   std::string data_type, dist_fn, index_path_prefix, result_path_prefix,
-      query_file, gt_file, disk_file_path, mem_index_path;
+      query_file, gt_file, disk_file_path, mem_index_path, glog_path,ssd_device_name;
   unsigned              num_threads, K, W, num_nodes_to_cache, search_io_limit;
   unsigned              mem_L;
   std::vector<unsigned> Lvec;
@@ -649,16 +763,16 @@ int main(int argc, char** argv) {
   bool                  use_coro = false;
   unsigned              issue_io_thread_num = 1;
   float                 use_ratio = 1.0;
+  float                 weight_ratio = 1.0;
   bool                  pure_io = false;
   unsigned query_num = 0;
   bool use_sq = false;
   unsigned coro_size = 0;
 
-  google::InitGoogleLogging(argv[0]);
-  // FLAGS_log_dir = "./logs";
-  FLAGS_logtostderr = false;  // 不输出到标准错误流
-  FLAGS_alsologtostderr = true;
-  FLAGS_minloglevel = 0;  // 0: INFO, 1: WARNING, 2: ERROR, 3: FATAL
+  // 初始化 gflags
+  // gflags::ParseCommandLineFlags(&argc, &argv, false);
+  
+
 
   po::options_description desc{"Arguments"};
   try {
@@ -728,10 +842,24 @@ int main(int argc, char** argv) {
                        "Use 1 for testing pure IO, 0 for not (default).");
     desc.add_options()("use_ratio", po::value<float>(&use_ratio)->default_value(1.0f),
                        "The percentage of how many vectors in a page to search each time");
+    desc.add_options()(
+        "weight_ratio", po::value<float>(&weight_ratio)->default_value(0.1f),
+        "The percentage of how many vectors are high weight in the search.");
+
     desc.add_options()("disk_file_path", po::value<std::string>(&disk_file_path)->required(),
                        "The path of the disk file (_disk.index in the original DiskANN)");
-    desc.add_options()("mem_index_path", po::value<std::string>(&mem_index_path)->default_value(""),
-                       "The prefix path of the mem_index");
+    desc.add_options()(
+        "mem_index_path",
+        po::value<std::string>(&mem_index_path)->default_value(""),
+        "The prefix path of the mem_index");
+    desc.add_options()(
+        "glog_path",
+        po::value<std::string>(&glog_path)->default_value("/tmp/glog"),
+        "The path of glog.");
+    desc.add_options()(
+        "ssd_device_name",
+        po::value<std::string>(&ssd_device_name)->default_value("NOT-DEFINE"),
+        "SSD device name using for starling.");
 
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -788,6 +916,18 @@ int main(int argc, char** argv) {
     return -1;
   }
 
+  // 初始化 glog
+  google::InitGoogleLogging(argv[0]);
+
+  // 设置 glog 的输出路径为传入的日志路径
+  // FLAGS_log_dir = glog_path;
+  // LOG(INFO) << "Now the log redirect to :"<<FLAGS_log_dir;
+  FLAGS_logtostderr = false;  // 不输出到标准错误流
+  FLAGS_alsologtostderr = true;
+  FLAGS_minloglevel = 0;  // 0: INFO, 1: WARNING, 2: ERROR, 3: FATAL
+  FLAGS_log_prefix="[IWEF][hh:mm:ss.uu threadid file:line]";
+  
+
   diskann::SearchParams params;
   params.num_threads = num_threads;
   params.recall_at = K;
@@ -805,9 +945,12 @@ int main(int argc, char** argv) {
   params.use_coro = use_coro;
   params.coro_size = coro_size;
   params.pure_io = pure_io;
+  params.weight_ratio = weight_ratio;
 
   params.query_num = query_num;
   params.issue_io_thread_num = issue_io_thread_num;
+
+  params.ssd_device_name = ssd_device_name;
 
   try {
     if (data_type == std::string("float"))

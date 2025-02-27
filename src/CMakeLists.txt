@@ -30,7 +30,7 @@ else()
         linux_aligned_file_reader.cpp math_utils.cpp natural_number_map.cpp
         natural_number_set.cpp memory_mapper.cpp partition_and_pq.cpp
         pq_flash_index.cpp logger.cpp utils.cpp page_search.cpp async_search.cpp visit_freq.cpp
-        range_search.cpp spdk_wrapper.cc)
+        range_search.cpp spdk_wrapper.cc bqann_queue.cpp)
     add_library(${PROJECT_NAME} ${CPP_SOURCES})
     # add_library(${PROJECT_NAME}_s STATIC ${CPP_SOURCES})
     target_link_options(${PROJECT_NAME} INTERFACE -Wl,--whole-archive -Wl,--no-as-needed)

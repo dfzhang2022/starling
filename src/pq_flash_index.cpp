@@ -115,7 +115,7 @@ namespace diskann {
         // bind physical core
         cpu_set_t mask;
         CPU_ZERO(&mask);
-        CPU_SET(thread, &mask);
+        CPU_SET(thread  + BEGIN_BIND_CORE_ID, &mask);
         if (sched_setaffinity(0, sizeof(mask), &mask) == -1) {
             std::cout << "Could not set CPU affinity" << std::endl;
         }
@@ -249,6 +249,7 @@ namespace diskann {
       this->q.emplace_back(new moodycamel::ConcurrentQueue<AlignedRead*>());
     }
 
+
     this->handles_map.resize(nthreads);
     for (size_t k = 0; k < nthreads; k++) {
       this->handles_map[k].resize(max_ncoroutines);
@@ -270,12 +271,21 @@ namespace diskann {
                     << ":" << ::strerror(errno);
           return;
         } else {
-          diskann::cout<< " allocating ctx: " << ctx_vec[k][t]<<" to "<<k<<", "<<t<< std::endl;
+          // diskann::cout<< " allocating ctx: " << ctx_vec[k][t]<<" to "<<k<<", "<<t<< std::endl;
         }
         libaio_cnt[k][t] = 0;
         atomic_mark[k*max_ncoroutines + t] = 2;
       }
     }
+    diskann::cout<< " allocatinged ctx for "<<nthreads<<" * "<<max_ncoroutines<< std::endl;
+
+    LOG(INFO) << "bqann_io_queues resize to "<<this->io_nthreads;
+    for( int i = 0; i < (int)this->io_nthreads; i++){
+      
+      // this->bqann_io_queues.push_back(new bqann::NormalQueue<std::pair<int,int>>());
+      this->bqann_io_queues.push_back(new bqann::WrrQueue<std::pair<int,int>>({10,1}));
+    }
+    // this->bqann_io_queues.resize(this->io_nthreads, bqann::NormalQueue<std::pair<int,int>>());
 
     auto result = io_uring_queue_init(1024, &ring_, 0);
     if (result != 0) {
@@ -1001,10 +1011,10 @@ namespace diskann {
 #ifndef EXEC_ENV_OLS
     // open AlignedFileReader handle to index_file
     std::string index_fname(disk_index_file);
-    if(!use_bq_search_){
-      index_fname="/dev/nvme2n1";
+    if(!use_bq_search_ && this->ssd_device_name!="NOT-DEFINE"){
+      index_fname=this->ssd_device_name;
     }
-    LOG(WARNING) << "Be careful the actual index file: " << index_fname << std::endl;
+    LOG(WARNING) << "Be careful the actual index file opened is: " << index_fname << std::endl;
     reader->open(index_fname);
     this->index_fd_ = open(index_fname.c_str(),O_RDONLY | O_NOATIME |O_DIRECT);
     
