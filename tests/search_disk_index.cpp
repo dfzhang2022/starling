@@ -367,6 +367,7 @@ int search_disk_index(
     size_t weight_num = 10;
     for (size_t i = 0; i < query_num; i++) {
       stats[i].weight = gen.generate() == 1 ? weight_num : 1;  // 5 or 1
+      _pFlashIndex->query_scheduler.push_query(i,stats[i].weight);
     }
 
     std::vector<uint64_t> query_result_ids_64(recall_at * query_num);
@@ -747,6 +748,7 @@ diskann::cout << std::setw(12) << mean_single_io_time
   diskann::aligned_free(query);
   if (warmup != nullptr)
     diskann::aligned_free(warmup);
+  std::cout<<" End search."<<std::endl;
   return 0;
 }
 
@@ -765,6 +767,7 @@ int main(int argc, char** argv) {
   float                 use_ratio = 1.0;
   float                 weight_ratio = 1.0;
   bool                  pure_io = false;
+  bool                  celerity_mode = false;
   unsigned query_num = 0;
   bool use_sq = false;
   unsigned coro_size = 0;
@@ -834,6 +837,8 @@ int main(int argc, char** argv) {
                        "Use 1 for using page_expansion in search (default), 0 for node_expansion");
     desc.add_options()("use_coro", po::value<bool>(&use_coro)->default_value(0),
                        "Use 1 for using coroutine in IO, 0 for using coroutine (default).");
+    desc.add_options()("celerity_mode", po::value<bool>(&celerity_mode)->default_value(0),
+                       "Use 1 for using CELERITY, 0 for not (default).");
     desc.add_options()("issue_io_thread_num", po::value<unsigned>(&issue_io_thread_num)->default_value(1),
                        "IO thread num for spdk");
     desc.add_options()("coro_size", po::value<unsigned>(&coro_size)->default_value(1),
@@ -946,6 +951,7 @@ int main(int argc, char** argv) {
   params.coro_size = coro_size;
   params.pure_io = pure_io;
   params.weight_ratio = weight_ratio;
+  params.celerity_mode = celerity_mode;
 
   params.query_num = query_num;
   params.issue_io_thread_num = issue_io_thread_num;

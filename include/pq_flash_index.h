@@ -27,6 +27,7 @@
 #include "index.h"
 #include "pq_flash_index_utils.h"
 
+#include "query_scheduler.h"
 
 
 #include "libaio.h"
@@ -60,6 +61,9 @@
 #define BEGIN_BIND_CORE_ID 0
 
 #define QPAIR_NUM 4
+
+
+#define NEW_FEATURE true
 
 
 // #define DEBUG_LOG true
@@ -135,6 +139,14 @@ namespace diskann {
     int                     coro_idx{-1};
   };
 
+  enum class CoroState{
+    Idle = 0,
+    LowWeightYield,
+    LowWeightWaitingForIO,
+    HighWeightWatingForIO,
+    Shutdown,
+  };
+
 
   template<typename T>
   struct ThreadData {
@@ -174,6 +186,7 @@ namespace diskann {
     }
     void load_search_params(diskann::SearchParams& params){
       this->use_bq_search_ = params.use_coro;
+      this->celerity_mode = params.celerity_mode;
       this->io_nthreads = params.issue_io_thread_num;
       this->ssd_device_name = params.ssd_device_name;
       return;
@@ -192,8 +205,9 @@ namespace diskann {
 
     int get_index_fd(){return index_fd_;}
 
-    void set_handle(int thread_id, int coro_id,cppcoro::coroutine_handle<> handle)
+    void set_handle(int thread_id, int coro_id,cppcoro::coroutine_handle<> handle,CoroState state = CoroState::HighWeightWatingForIO)
     {
+      this->coro_states[thread_id][coro_id] = state;
       this->handles_map[thread_id][coro_id] = handle;
     }
 
@@ -436,6 +450,8 @@ namespace diskann {
 
     std::shared_ptr< ssdps::SpdkWrapper> &spdk_reader;
 
+    QueryScheduler query_scheduler;
+
    protected:
     DISKANN_DLLEXPORT void use_medoids_data_as_centroids();
     DISKANN_DLLEXPORT void setup_thread_data(_u64 nthreads);
@@ -564,6 +580,7 @@ namespace diskann {
     std::atomic<int> executing_thread_num = 0;
     std::mutex mtx;
 
+    std::vector<std::vector<diskann::CoroState>> coro_states;
     std::vector<std::vector<cppcoro::coroutine_handle<>>> handles_map;
 
     // in-memory navigation graph
@@ -578,6 +595,7 @@ namespace diskann {
 
     // BQ search
     bool use_bq_search_ = false;
+    bool celerity_mode = false;
     _u64 worker_nthreads;
     _u64 io_nthreads;
     _u64 coro_per_thread_;
@@ -742,6 +760,43 @@ namespace diskann {
     __s32                       result_;
     CoroIOIssueData             ext_data_;
     size_t                      weight;
+    ThreadStats                *thread_stat_;
+  };
+
+  template<typename T>
+  class NullAwaiter {
+   public:
+   NullAwaiter(PQFlashIndex<T>          *index, int thread_id,
+                      int coro_id,ThreadStats* thread_stat = nullptr) noexcept
+        : pq_flash_index_(index),thread_stat_(thread_stat) {
+          // std::cout << "Thread id:"<<thread_id<<", coro id:"<<coro_id<< std::endl;
+      this->ext_data_.coro_idx = coro_id;
+      this->ext_data_.thread_id = thread_id;
+    }
+
+    bool await_ready() const noexcept {
+      return false;
+    }
+
+    void await_suspend(cppcoro::coroutine_handle<> handle);
+
+    __s32 await_resume() const noexcept {
+      return result_;
+    }
+
+    void SetResult(__s32 result) noexcept {
+      result_ = result;
+    }
+
+    cppcoro::coroutine_handle<> GetHandle() const noexcept {
+      return handle_;
+    }
+
+   private:
+    PQFlashIndex<T>            *pq_flash_index_;
+    cppcoro::coroutine_handle<> handle_;
+    __s32                       result_;
+    CoroIOIssueData             ext_data_;
     ThreadStats                *thread_stat_;
   };
 }  // namespace diskann

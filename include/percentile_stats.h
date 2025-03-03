@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <chrono>
 #include <math.h>
+#include <atomic>
 #ifdef _WINDOWS
 #include <numeric>
 #endif
@@ -69,6 +70,11 @@ namespace diskann {
     std::vector<BlockVisited> block_visited_queue;
   };
 
+  enum OperationMode {
+    SWIFT_STREAM = 0,    // 低延迟优先
+    TORRENT_FLOW     // 高吞吐优先
+  };
+
   struct ThreadStats {
     float total_us = 0;  // total time to executing one thread in micross
     float io_us = 0;     // total time spent in IO
@@ -76,6 +82,9 @@ namespace diskann {
     float executing_in_coro_us = 0;    // total time spent in coro
     float io_submit_us = 0;
     float io_reap_us = 0;
+
+    std::vector<float > cpu_time_per_coro;
+
 
     float compute_us = 0;    // total time spent in distinct
 
@@ -90,8 +99,10 @@ namespace diskann {
 
     unsigned n_ios = 0;
     unsigned n_hops = 0;        // # search hops
-    
-    
+
+
+    std::atomic<int> mode{TORRENT_FLOW};
+    std::atomic<int> high_weight_counter{-1};
   };
 
   template<typename T>

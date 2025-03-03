@@ -51,6 +51,62 @@ namespace diskann {
               << std::endl;
   }
 
+  std::string format_coro_usage(ThreadStats* thread_stat, bool is_coro = false) {
+
+    std::vector<float> time_per_coro = thread_stat->cpu_time_per_coro;
+    float total_time = thread_stat->total_us;
+    float scheduler_time = thread_stat->scheduler_total_us;
+    if (time_per_coro.empty()) return "[No coroutines]";
+    if (total_time <= 0.0f) return "[Invalid total time]";
+    
+    const size_t num_workers = time_per_coro.size();
+
+    std::stringstream ss;
+    
+    // 定义比例条参数
+    const int max_bar_length = 40;   // 单个协程比例条最大长度（字符数）
+    const int min_bar_length = 8;    // 最小长度（确保标签可读）
+
+    for (size_t i = 0; i < num_workers; ++i) {
+        const float percent = (time_per_coro[i] / total_time) * 100.0f;
+        const int bar_length = std::max(min_bar_length, 
+            static_cast<int>(max_bar_length * (percent / 100.0f)));
+        
+        // 构建标签
+        std::string tag = "C" + std::to_string(i+1) + ":" 
+                        + std::to_string(static_cast<int>(percent)) + "%";
+        
+        // 计算左右填充长度
+        int total_fill = bar_length - tag.length();
+        int left_fill = total_fill / 2;
+        int right_fill = total_fill - left_fill;
+        
+        // 构建比例条
+        ss << "[" 
+           << std::string(left_fill, '=') 
+           << tag 
+           << std::string(right_fill, '=') 
+           << "]";
+    }
+
+    // 处理调度协程（S）
+    const float sched_percent = (scheduler_time / total_time) * 100.0f;
+    const int sched_bar_length = std::max(min_bar_length, 
+        static_cast<int>(max_bar_length * (sched_percent / 100.0f)));
+    std::string sched_tag = "S:" + std::to_string(static_cast<int>(sched_percent)) + "%";
+    int sched_total_fill = sched_bar_length - sched_tag.length();
+    int sched_left_fill = sched_total_fill / 2;
+    int sched_right_fill = sched_total_fill - sched_left_fill;
+    
+    ss << "[" 
+       << std::string(sched_left_fill, '=') 
+       << sched_tag 
+       << std::string(sched_right_fill, '=') 
+       << "]";
+
+    return ss.str();
+}
+
 
   double calculateBlockIdFrequency(const std::vector<AlignedRead>& reads, int& distinctNum, int& allNum) {
     // Use an unordered_map to count the occurrences of each block_id
@@ -93,6 +149,19 @@ namespace diskann {
     allNum = totalReads;
     return (totalReads - diffReadNum)/totalReads;
   }
+
+  template<typename T>
+  void NullAwaiter<T>::await_suspend(cppcoro::coroutine_handle<> handle){
+    int            thread_id_local = this->ext_data_.thread_id;
+    int            coro_id_local = this->ext_data_.coro_idx;
+    diskann::Timer awaiter_timer, new_timer;
+
+    pq_flash_index_->set_handle(thread_id_local, coro_id_local, handle,
+                                CoroState::LowWeightYield);
+    thread_stat_->awaiter_middle_time_us += new_timer.elapsed();
+
+    thread_stat_->awaiter_time_us += awaiter_timer.elapsed();
+  }
   template<typename T>
   void SPDKIORegisterAwaiter<T>::await_suspend(
       cppcoro::coroutine_handle<> handle) {
@@ -106,6 +175,7 @@ namespace diskann {
     new_timer.reset();
 
 
+    
     //设置回调函数指针
     pq_flash_index_->set_handle(thread_id_local, coro_id_local, handle);
     
@@ -277,340 +347,368 @@ namespace diskann {
       const _u64 beam_width, const _u32 io_limit, const bool use_reorder_data,
       const float use_ratio, QueryStats *stats, int thread_id, int coro_id,
       BQANN::Countdown &countdown, ThreadStats* thread_stat) {
-      if (thread_id >= 0 && thread_id < 2) {
-        if (coro_id > 0) {
+      // if (thread_id >= 0 && thread_id < 2) {
+      //   if (coro_id > 0) {
+      //     countdown.Decrement();
+      //     co_return;
+      //   }
+      // }
+      // std::cout << "Get into coro."<< std::endl;
+      QueryScratch<T> scratch = this->coro_data.pop();
+      while (scratch.sector_scratch == nullptr) {
+        this->coro_data.wait_for_push_notify();
+        scratch = this->coro_data.pop();
+      }
+      Timer thread_timer;
+      thread_timer.reset();
+      // std::cout << "Get coro data."<< std::endl;
+      // int q_id = thread_id + coro_id;
+      // Continuously obtain new query IDs
+      // for (size_t q_id = thread_id * max_ncoroutines + coro_id;;
+      //      q_id = q_id + max_nthreads * max_ncoroutines) {
+      int q_id = 0;
+      while (true) {
+        // q_id = next_qid++;
+        if (!(this->query_scheduler.get_next(q_id)) || q_id >= (int)query_num) {
+          this->coro_data.push(scratch);
+          this->coro_data.push_notify_all();
+          if(verbose_) {
+            std::cout << "Coro Exit." << thread_id << "," << coro_id
+                      << std::endl;
+          }
+          thread_stat->executing_in_coro_us += (double) thread_timer.elapsed();
+          coro_states[thread_id][coro_id] = CoroState::Shutdown;
           countdown.Decrement();
           co_return;
         }
-      }
-        // std::cout << "Get into coro."<< std::endl;
-    QueryScratch<T> scratch = this->coro_data.pop();
-    while (scratch.sector_scratch == nullptr) {
-      this->coro_data.wait_for_push_notify();
-      scratch = this->coro_data.pop();
-    }
-    Timer thread_timer;
-    thread_timer.reset();
-    // std::cout << "Get coro data."<< std::endl;
-    // int q_id = thread_id + coro_id;
-    // Continuously obtain new query IDs
-    // for (size_t q_id = thread_id * max_ncoroutines + coro_id;;
-    //      q_id = q_id + max_nthreads * max_ncoroutines) {
-    size_t q_id = 0;
-    while(true){
-      q_id = next_qid++;
-      if (q_id >= query_num) {
+        // if(q_id%1000 == 0)
+        // std::cout<<"Executing Q#"<<q_id<<", "<<thread_id<<","<<coro_id<<std::endl;
 
-        this->coro_data.push(scratch);
-        this->coro_data.push_notify_all();
-        if (verbose_) {
-          std::cout << "Coro Exit." << thread_id << "," << coro_id << std::endl;
+        const T    *this_coro_query = query1 + (q_id * this->query_aligned_dim);
+        _u64       *this_coro_result_ids_64 = indices + (q_id * k_search);
+        float      *this_coro_result_distances = distances + (q_id * k_search);
+        QueryStats *this_coro_stats = stats + q_id;
+
+        CHECK_NE(this_coro_stats, nullptr) << "The stats structure invalid.";
+
+        if(thread_id>=0 && thread_id<2 && coro_id == 0){
+          this_coro_stats->weight = 10;
+        }else{
+          this_coro_stats->weight = 1;
         }
-        thread_stat->executing_in_coro_us += (double) thread_timer.elapsed();
-        countdown.Decrement();
-        co_return;
-      }
-      // if(q_id%1000 == 0)
-      // std::cout<<"Executing Q#"<<q_id<<", "<<thread_id<<", "<<coro_id<<std::endl;
-
-
-    
-
-      const T     *this_coro_query = query1 + (q_id * this->query_aligned_dim);
-      _u64  *this_coro_result_ids_64 = indices + (q_id * k_search);
-      float *this_coro_result_distances = distances + (q_id * k_search);
-      QueryStats  *this_coro_stats = stats + q_id;
-
-      if(thread_id>=0 && thread_id<2){
-        this_coro_stats->weight = 10;
-      }else{
-        this_coro_stats->weight = 1;
-      }
-
-      // copy query to coroutine specific aligned and allocated memory (for
-      // distance calculations we need aligned data)
-      float        query_norm = 0;
-      const T     *query = scratch.aligned_query_T;
-      const float *query_float = scratch.aligned_query_float;
-      
-      uint32_t query_dim = metric == diskann::Metric::INNER_PRODUCT
-                               ? this->data_dim - 1
-                               : this->data_dim;
-
-      for (uint32_t i = 0; i < query_dim; i++) {
-        scratch.aligned_query_float[i] = this_coro_query[i];
-        scratch.aligned_query_T[i] = this_coro_query[i];
-        query_norm += query1[i] * this_coro_query[i];
-      }
-
-      auto query_scratch = &(scratch);
-
-      // reset query
-      query_scratch->reset();
-
-      // pointers to buffers for data
-      T *data_buf = query_scratch->coord_scratch;
-      // _mm_prefetch((char *) data_buf, _MM_HINT_T1);
-
-      // sector scratch
-      char *sector_scratch = query_scratch->sector_scratch;
-      _u64 &sector_scratch_idx = query_scratch->sector_idx;
-
-      // query <-> PQ chunk centers distances
-      float *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
-      pq_table.populate_chunk_distances(query_float, pq_dists);
-
-      // query <-> neighbor list
-      float *dist_scratch = query_scratch->aligned_dist_scratch;
-      _u8   *pq_coord_scratch = query_scratch->aligned_pq_coord_scratch;
-
-      Timer query_timer, io_timer, cpu_timer, coro_timer;
-      query_timer.reset();
-      coro_timer.reset();
-      std::vector<Neighbor>     retset(l_search + 1);
-      tsl::robin_set<_u64>     &visited = *(query_scratch->visited);
-      tsl::robin_set<unsigned> &page_visited = *(query_scratch->page_visited);
-      unsigned                  cur_list_size = 0;
-
-      std::vector<Neighbor> full_retset;
-      full_retset.reserve(4096);
-      _u32  best_medoid = 0;
-      float best_dist = (std::numeric_limits<float>::max)();
-      std::vector<SimpleNeighbor> medoid_dists;
-      for (_u64 cur_m = 0; cur_m < num_medoids; cur_m++) {
-        float cur_expanded_dist = dist_cmp_float->compare(
-            query_float, centroid_data + aligned_dim * cur_m,
-            (unsigned) aligned_dim);
-        if (cur_expanded_dist < best_dist) {
-          best_medoid = medoids[cur_m];
-          best_dist = cur_expanded_dist;
+        if (celerity_mode && thread_stat->mode == TORRENT_FLOW && this_coro_stats->weight > 1) {
+          thread_stat->mode = SWIFT_STREAM;
+          thread_stat->high_weight_counter = coro_id;
         }
-      }
 
-      // lambda to batch compute query<-> node distances in PQ space
-      auto compute_pq_dists = [this, pq_coord_scratch, pq_dists](
-                                  const unsigned *ids, const _u64 n_ids,
-                                  float *dists_out) {
-        pq_flash_index_utils::aggregate_coords(
-            ids, n_ids, this->data, this->n_chunks, pq_coord_scratch);
-        pq_flash_index_utils::pq_dist_lookup(
-            pq_coord_scratch, n_ids, this->n_chunks, pq_dists, dists_out);
-      };
+        // copy query to coroutine specific aligned and allocated memory (for
+        // distance calculations we need aligned data)
+        float        query_norm = 0;
+        const T     *query = scratch.aligned_query_T;
+        const float *query_float = scratch.aligned_query_float;
 
-      // 将id的点强制push进入full_retset
-      auto compute_extact_dists_and_push = [&](const char    *node_buf,
-                                               const unsigned id) -> float {
-        T *node_fp_coords_copy = data_buf;
-        memcpy(node_fp_coords_copy, node_buf, disk_bytes_per_point);
-        float cur_expanded_dist = dist_cmp->compare(query, node_fp_coords_copy,
-                                                    (unsigned) aligned_dim);
-        full_retset.push_back(Neighbor(id, cur_expanded_dist, true));
-        return cur_expanded_dist;
-      };
+        uint32_t query_dim = metric == diskann::Metric::INNER_PRODUCT
+                                 ? this->data_dim - 1
+                                 : this->data_dim;
 
-      auto compute_and_push_nbrs = [&](const char *node_buf, unsigned &nk) {
-        unsigned *node_nbrs = OFFSET_TO_NODE_NHOOD(node_buf);
-        unsigned  nnbrs = *(node_nbrs++);
-        unsigned  nbors_cand_size = 0;
-        for (unsigned m = 0; m < nnbrs; ++m) {
-          if (visited.find(node_nbrs[m]) == visited.end()) {
-            node_nbrs[nbors_cand_size++] = node_nbrs[m];
-            visited.insert(node_nbrs[m]);
+        for (uint32_t i = 0; i < query_dim; i++) {
+          scratch.aligned_query_float[i] = this_coro_query[i];
+          scratch.aligned_query_T[i] = this_coro_query[i];
+          query_norm += query1[i] * this_coro_query[i];
+        }
+
+        auto query_scratch = &(scratch);
+
+        // reset query
+        query_scratch->reset();
+
+        // pointers to buffers for data
+        T *data_buf = query_scratch->coord_scratch;
+        // _mm_prefetch((char *) data_buf, _MM_HINT_T1);
+
+        // sector scratch
+        char *sector_scratch = query_scratch->sector_scratch;
+        _u64 &sector_scratch_idx = query_scratch->sector_idx;
+
+        // query <-> PQ chunk centers distances
+        float *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
+        pq_table.populate_chunk_distances(query_float, pq_dists);
+
+        // query <-> neighbor list
+        float *dist_scratch = query_scratch->aligned_dist_scratch;
+        _u8   *pq_coord_scratch = query_scratch->aligned_pq_coord_scratch;
+
+        Timer query_timer, io_timer, cpu_timer, coro_timer;
+        query_timer.reset();
+        coro_timer.reset();
+        std::vector<Neighbor>     retset(l_search + 1);
+        tsl::robin_set<_u64>     &visited = *(query_scratch->visited);
+        tsl::robin_set<unsigned> &page_visited = *(query_scratch->page_visited);
+        unsigned                  cur_list_size = 0;
+
+        std::vector<Neighbor> full_retset;
+        full_retset.reserve(4096);
+        _u32  best_medoid = 0;
+        float best_dist = (std::numeric_limits<float>::max)();
+        std::vector<SimpleNeighbor> medoid_dists;
+        for (_u64 cur_m = 0; cur_m < num_medoids; cur_m++) {
+          float cur_expanded_dist = dist_cmp_float->compare(
+              query_float, centroid_data + aligned_dim * cur_m,
+              (unsigned) aligned_dim);
+          if (cur_expanded_dist < best_dist) {
+            best_medoid = medoids[cur_m];
+            best_dist = cur_expanded_dist;
           }
         }
-        if (nbors_cand_size) {
-          compute_pq_dists(node_nbrs, nbors_cand_size, dist_scratch);
-          for (unsigned m = 0; m < nbors_cand_size; ++m) {
-            const int   nbor_id = node_nbrs[m];
-            const float nbor_dist = dist_scratch[m];
-            if (this_coro_stats != nullptr) {
-              this_coro_stats->n_cmps++;
+
+        // lambda to batch compute query<-> node distances in PQ space
+        auto compute_pq_dists = [this, pq_coord_scratch, pq_dists](
+                                    const unsigned *ids, const _u64 n_ids,
+                                    float *dists_out) {
+          pq_flash_index_utils::aggregate_coords(
+              ids, n_ids, this->data, this->n_chunks, pq_coord_scratch);
+          pq_flash_index_utils::pq_dist_lookup(
+              pq_coord_scratch, n_ids, this->n_chunks, pq_dists, dists_out);
+        };
+
+        // 将id的点强制push进入full_retset
+        auto compute_extact_dists_and_push = [&](const char    *node_buf,
+                                                 const unsigned id) -> float {
+          T *node_fp_coords_copy = data_buf;
+          memcpy(node_fp_coords_copy, node_buf, disk_bytes_per_point);
+          float cur_expanded_dist = dist_cmp->compare(
+              query, node_fp_coords_copy, (unsigned) aligned_dim);
+          full_retset.push_back(Neighbor(id, cur_expanded_dist, true));
+          return cur_expanded_dist;
+        };
+
+        auto compute_and_push_nbrs = [&](const char *node_buf, unsigned &nk) {
+          unsigned *node_nbrs = OFFSET_TO_NODE_NHOOD(node_buf);
+          unsigned  nnbrs = *(node_nbrs++);
+          unsigned  nbors_cand_size = 0;
+          for (unsigned m = 0; m < nnbrs; ++m) {
+            if (visited.find(node_nbrs[m]) == visited.end()) {
+              node_nbrs[nbors_cand_size++] = node_nbrs[m];
+              visited.insert(node_nbrs[m]);
             }
-            if (nbor_dist >= retset[cur_list_size - 1].distance &&
-                (cur_list_size == l_search))
-              continue;
-            Neighbor nn(nbor_id, nbor_dist, true);
-            // Return position in sorted list where nn inserted
-            auto r = InsertIntoPool(retset.data(), cur_list_size, nn);
-            if (cur_list_size < l_search)
-              ++cur_list_size;
-            // nk logs the best position in the retset that was updated due to
-            // neighbors of n.
-            if (r < nk)
-              nk = r;
           }
-        }
-      };
-
-      // 这个是原本就有的结构
-      // 计算 node_ids[] 若干个节点的pq距离并加入到retset中
-      auto compute_and_add_to_retset = [&](const unsigned *node_ids,
-                                           const _u64      n_ids) {
-        compute_pq_dists(node_ids, n_ids, dist_scratch);
-        for (_u64 i = 0; i < n_ids; ++i) {
-          retset[cur_list_size].id = node_ids[i];
-          retset[cur_list_size].distance = dist_scratch[i];
-          retset[cur_list_size++].flag = true;
-          visited.insert(node_ids[i]);
-        }
-      };
-
-      if (mem_L) {
-        std::vector<unsigned> mem_tags(mem_L);
-        std::vector<float>    mem_dists(mem_L);
-        std::vector<T *>      res = std::vector<T *>();
-        mem_index_->search_with_tags(query, mem_L, mem_L, mem_tags.data(),
-                                     mem_dists.data(), nullptr, res);
-        compute_and_add_to_retset(
-            mem_tags.data(), std::min((unsigned) mem_L, (unsigned) l_search));
-      } else {
-        compute_and_add_to_retset(&best_medoid, 1);
-      }
-
-      std::sort(retset.begin(), retset.begin() + cur_list_size);
-
-      unsigned num_ios = 0;
-      unsigned k = 0;
-
-      std::vector<float>
-          io_push_queue_time_vec;  // 生成IO请求，提交到队列的时间 = ts_beign
-      std::vector<float>
-          io_submit_time_vec;  // 通过spdk提交io时间 = now - ts_begin
-      std::vector<float>
-          io_complete_time_vec;  // 通过spdk完成io的时间 = now - ts_begin
-      std::vector<float>
-      io_complete_time_mean_vec;  // 通过spdk完成io的时间 = now - ts_begin
-      std::vector<float>
-      io_complete_time_min_vec;  // 通过spdk完成io的时间 = now - ts_begin
-      std::vector<float>
-      io_complete_time_max_vec;  // 通过spdk完成io的时间 = now - ts_begin
-      std::vector<float>
-          io_resume_time_vec;  // 对应的coro恢复执行的时间 = now - ts_begin
-      std::vector<float> io_single_time_vec;
-
-      // cleared every iteration
-      std::vector<unsigned> frontier;
-      frontier.reserve(2 * beam_width);
-      std::vector<std::pair<unsigned, char *>> frontier_nhoods;
-      frontier_nhoods.reserve(2 * beam_width);
-      std::vector<std::pair<unsigned, char *>> prefetch_frontier_nhoods;
-      prefetch_frontier_nhoods.reserve(2 * beam_width * affinity_size_);
-
-      std::vector<AlignedRead> frontier_read_reqs;
-      frontier_read_reqs.reserve(2 * beam_width);
-      std::vector<std::pair<unsigned, std::pair<unsigned, unsigned *>>>
-          cached_nhoods;
-      cached_nhoods.reserve(2 * beam_width);
-
-      std::vector<std::pair<unsigned, std::pair<unsigned, unsigned *>>>
-          aff_cached_nhoods;
-      aff_cached_nhoods.reserve(2 * beam_width);
-
-      std::vector<unsigned> last_io_ids;
-      last_io_ids.reserve(2 * beam_width);
-      std::vector<char> last_pages(SECTOR_LEN * beam_width * 2);
-
-
-      while (k < cur_list_size && num_ios < io_limit) {
-        if (this->verbose_) {
-          std::cout << cur_list_size << "," << k
-                    << ", fullret_size: " << full_retset.size() << std::endl;
-          std::cout << retset[k].print() << std::endl;
-        }
-        unsigned nk = cur_list_size;
-        // clear iteration state
-        frontier.clear();
-        frontier_nhoods.clear();
-        frontier_read_reqs.clear();
-        prefetch_frontier_nhoods.clear();
-        cached_nhoods.clear();
-        sector_scratch_idx = 0;
-        // find new beam
-        _u32 marker = k;
-        _u32 num_seen = 0;
-
-        // Log the id of block be visited.
-        std::vector<BlockVisited> block_visited_in_this_iter;
-        // distribute cache and disk-read nodes
-        while (marker < cur_list_size && frontier.size() < beam_width &&
-               num_seen < beam_width) {
-          const unsigned pid = id2page_[retset[marker].id];
-          if (page_visited.find(pid) == page_visited.end() &&
-              retset[marker].flag) {
-            num_seen++;
-            auto iter = nhood_cache.find(retset[marker].id);
-            if (iter != nhood_cache.end()) {
-              cached_nhoods.push_back(
-                  std::make_pair(retset[marker].id, iter->second));
+          if (nbors_cand_size) {
+            compute_pq_dists(node_nbrs, nbors_cand_size, dist_scratch);
+            for (unsigned m = 0; m < nbors_cand_size; ++m) {
+              const int   nbor_id = node_nbrs[m];
+              const float nbor_dist = dist_scratch[m];
               if (this_coro_stats != nullptr) {
-                this_coro_stats->n_cache_hits++;
+                this_coro_stats->n_cmps++;
               }
-            } else {
-              frontier.push_back(retset[marker].id);
-              page_visited.insert(pid);
+              if (nbor_dist >= retset[cur_list_size - 1].distance &&
+                  (cur_list_size == l_search))
+                continue;
+              Neighbor nn(nbor_id, nbor_dist, true);
+              // Return position in sorted list where nn inserted
+              auto r = InsertIntoPool(retset.data(), cur_list_size, nn);
+              if (cur_list_size < l_search)
+                ++cur_list_size;
+              // nk logs the best position in the retset that was updated due to
+              // neighbors of n.
+              if (r < nk)
+                nk = r;
             }
-            retset[marker].flag = false;
           }
-          marker++;
+        };
+
+        // 这个是原本就有的结构
+        // 计算 node_ids[] 若干个节点的pq距离并加入到retset中
+        auto compute_and_add_to_retset = [&](const unsigned *node_ids,
+                                             const _u64      n_ids) {
+          compute_pq_dists(node_ids, n_ids, dist_scratch);
+          for (_u64 i = 0; i < n_ids; ++i) {
+            retset[cur_list_size].id = node_ids[i];
+            retset[cur_list_size].distance = dist_scratch[i];
+            retset[cur_list_size++].flag = true;
+            visited.insert(node_ids[i]);
+          }
+        };
+
+        auto check_can_be_yield = [&]() -> bool {
+          if (!(celerity_mode &&
+                thread_stat->mode == OperationMode::SWIFT_STREAM &&
+                this_coro_stats->weight == 1))
+            return false;
+          int highweightcoroID = thread_stat->high_weight_counter;
+          CHECK_GE(highweightcoroID, 0);
+          int expected = libaio_cnt[thread_id][highweightcoroID];
+          return atomic_mark[thread_id * max_ncoroutines + highweightcoroID] ==
+                 expected;
+        };
+
+        if (mem_L) {
+          std::vector<unsigned> mem_tags(mem_L);
+          std::vector<float>    mem_dists(mem_L);
+          std::vector<T *>      res = std::vector<T *>();
+          mem_index_->search_with_tags(query, mem_L, mem_L, mem_tags.data(),
+                                       mem_dists.data(), nullptr, res);
+          compute_and_add_to_retset(
+              mem_tags.data(), std::min((unsigned) mem_L, (unsigned) l_search));
+        } else {
+          compute_and_add_to_retset(&best_medoid, 1);
         }
 
-        // read nhoods of frontier ids
-        if (!frontier.empty()) {
-          std::vector<_u64> prefetch_block_ids;
-          if (this_coro_stats != nullptr)
-            this_coro_stats->n_hops++;
-          for (_u64 i = 0; i < frontier.size(); i++) {
-            auto                    id = frontier[i];
-            _u64                    block_id = static_cast<_u64>(id2page_[id]);
-            std::pair<_u32, char *> fnhood;
-            fnhood.first = id;
-            fnhood.second = sector_scratch + sector_scratch_idx * SECTOR_LEN;
-            sector_scratch_idx++;
-            frontier_nhoods.push_back(fnhood);
-            // AlignedRead* tmp_ptr = new AlignedRead((static_cast<_u64>(id2page_[id] + 1)) * SECTOR_LEN, SECTOR_LEN,
-            // fnhood.second, block_id, thread_id, coro_id);
-            // frontier_read_reqs.emplace_back(*tmp_ptr);
-            frontier_read_reqs.emplace_back((static_cast<_u64>(id2page_[id] + 1)) * SECTOR_LEN, SECTOR_LEN,
-            fnhood.second, block_id+1, thread_id, coro_id);
-            if (this_coro_stats != nullptr) {
-              this_coro_stats->n_4k++;
-              this_coro_stats->n_ios++;
-              block_visited_in_this_iter.push_back(BlockVisited(
-                  block_id+1, std::chrono::high_resolution_clock::now()));
+        std::sort(retset.begin(), retset.begin() + cur_list_size);
+
+        unsigned num_ios = 0;
+        unsigned k = 0;
+
+        std::vector<float>
+            io_push_queue_time_vec;  // 生成IO请求，提交到队列的时间 = ts_beign
+        std::vector<float>
+            io_submit_time_vec;  // 通过spdk提交io时间 = now - ts_begin
+        std::vector<float>
+            io_complete_time_vec;  // 通过spdk完成io的时间 = now - ts_begin
+        std::vector<float>
+            io_complete_time_mean_vec;  // 通过spdk完成io的时间 = now - ts_begin
+        std::vector<float>
+            io_complete_time_min_vec;  // 通过spdk完成io的时间 = now - ts_begin
+        std::vector<float>
+            io_complete_time_max_vec;  // 通过spdk完成io的时间 = now - ts_begin
+        std::vector<float>
+            io_resume_time_vec;  // 对应的coro恢复执行的时间 = now - ts_begin
+        std::vector<float> io_single_time_vec;
+
+        // cleared every iteration
+        std::vector<unsigned> frontier;
+        frontier.reserve(2 * beam_width);
+        std::vector<std::pair<unsigned, char *>> frontier_nhoods;
+        frontier_nhoods.reserve(2 * beam_width);
+        std::vector<std::pair<unsigned, char *>> prefetch_frontier_nhoods;
+        prefetch_frontier_nhoods.reserve(2 * beam_width * affinity_size_);
+
+        std::vector<AlignedRead> frontier_read_reqs;
+        frontier_read_reqs.reserve(2 * beam_width);
+        std::vector<std::pair<unsigned, std::pair<unsigned, unsigned *>>>
+            cached_nhoods;
+        cached_nhoods.reserve(2 * beam_width);
+
+        std::vector<std::pair<unsigned, std::pair<unsigned, unsigned *>>>
+            aff_cached_nhoods;
+        aff_cached_nhoods.reserve(2 * beam_width);
+
+        std::vector<unsigned> last_io_ids;
+        last_io_ids.reserve(2 * beam_width);
+        std::vector<char> last_pages(SECTOR_LEN * beam_width * 2);
+
+        while (k < cur_list_size && num_ios < io_limit) {
+          if (this->verbose_) {
+            std::cout << cur_list_size << "," << k
+                      << ", fullret_size: " << full_retset.size() << std::endl;
+            std::cout << retset[k].print() << std::endl;
+          }
+          unsigned nk = cur_list_size;
+          // clear iteration state
+          frontier.clear();
+          frontier_nhoods.clear();
+          frontier_read_reqs.clear();
+          prefetch_frontier_nhoods.clear();
+          cached_nhoods.clear();
+          sector_scratch_idx = 0;
+          // find new beam
+          _u32 marker = k;
+          _u32 num_seen = 0;
+
+          // Log the id of block be visited.
+          std::vector<BlockVisited> block_visited_in_this_iter;
+          // distribute cache and disk-read nodes
+          while (marker < cur_list_size && frontier.size() < beam_width &&
+                 num_seen < beam_width) {
+            const unsigned pid = id2page_[retset[marker].id];
+            if (page_visited.find(pid) == page_visited.end() &&
+                retset[marker].flag) {
+              num_seen++;
+              auto iter = nhood_cache.find(retset[marker].id);
+              if (iter != nhood_cache.end()) {
+                cached_nhoods.push_back(
+                    std::make_pair(retset[marker].id, iter->second));
+                if (this_coro_stats != nullptr) {
+                  this_coro_stats->n_cache_hits++;
+                }
+              } else {
+                frontier.push_back(retset[marker].id);
+                page_visited.insert(pid);
+              }
+              retset[marker].flag = false;
             }
-            num_ios++;
-          }
-          io_timer.reset();
-
-          // TODO use coroutine to issue io
-          if (verbose_) {
-            size_t io_size = frontier_read_reqs.size();
-            std::cout << "Begin" << std::endl;
-            std::cout << io_size << std::endl;
+            marker++;
           }
 
-          if (this_coro_stats != nullptr) {
-              this_coro_stats->executing_in_coro_us += (double) coro_timer.elapsed();
-          }
-          thread_stat->executing_in_coro_us += (double) thread_timer.elapsed();
+          // read nhoods of frontier ids
+          if (!frontier.empty()) {
+            std::vector<_u64> prefetch_block_ids;
+            if (this_coro_stats != nullptr)
+              this_coro_stats->n_hops++;
+            for (_u64 i = 0; i < frontier.size(); i++) {
+              auto id = frontier[i];
+              _u64 block_id = static_cast<_u64>(id2page_[id]);
+              std::pair<_u32, char *> fnhood;
+              fnhood.first = id;
+              fnhood.second = sector_scratch + sector_scratch_idx * SECTOR_LEN;
+              sector_scratch_idx++;
+              frontier_nhoods.push_back(fnhood);
+              // AlignedRead* tmp_ptr = new
+              // AlignedRead((static_cast<_u64>(id2page_[id] + 1)) * SECTOR_LEN,
+              // SECTOR_LEN, fnhood.second, block_id, thread_id, coro_id);
+              // frontier_read_reqs.emplace_back(*tmp_ptr);
+              frontier_read_reqs.emplace_back(
+                  (static_cast<_u64>(id2page_[id] + 1)) * SECTOR_LEN,
+                  SECTOR_LEN, fnhood.second, block_id + 1, thread_id, coro_id);
+              if (this_coro_stats != nullptr) {
+                this_coro_stats->n_4k++;
+                this_coro_stats->n_ios++;
+                block_visited_in_this_iter.push_back(BlockVisited(
+                    block_id + 1, std::chrono::high_resolution_clock::now()));
+              }
+              num_ios++;
+            }
+            io_timer.reset();
 
-          // int io_return_num = co_await diskann::IORegisterAwaiter<T>((PQFlashIndex<T>*)(this), frontier_read_reqs,thread_id,coro_id,thread_stat);
-          // int io_return_num = co_await diskann::NewIORegisterAwaiter<T>((PQFlashIndex<T>*)(this), frontier_read_reqs,thread_id,coro_id,thread_stat);
-          int io_return_num = co_await diskann::SPDKIORegisterAwaiter<T>((PQFlashIndex<T>*)(this), frontier_read_reqs,thread_id,coro_id,thread_stat,this_coro_stats->weight);
+            if (verbose_) {
+              size_t io_size = frontier_read_reqs.size();
+              std::cout << "Begin" << std::endl;
+              std::cout << io_size << std::endl;
+            }
 
-          this->query_io_per_coro[thread_id][coro_id].resume();
+            if (this_coro_stats != nullptr) {
+              this_coro_stats->executing_in_coro_us +=
+                  (double) coro_timer.elapsed();
+            }
+            thread_stat->executing_in_coro_us +=
+                (double) thread_timer.elapsed();
+            thread_stat->cpu_time_per_coro[coro_id] +=
+                (double) thread_timer.elapsed();
 
+            // int io_return_num = co_await
+            // diskann::IORegisterAwaiter<T>((PQFlashIndex<T>*)(this),
+            // frontier_read_reqs,thread_id,coro_id,thread_stat); int
+            // io_return_num = co_await
+            // diskann::NewIORegisterAwaiter<T>((PQFlashIndex<T>*)(this),
+            // frontier_read_reqs,thread_id,coro_id,thread_stat);
+            int io_return_num = co_await diskann::SPDKIORegisterAwaiter<T>(
+                (PQFlashIndex<T> *) (this), frontier_read_reqs, thread_id,
+                coro_id, thread_stat, this_coro_stats->weight);
 
-          // std::cout<<"Seperate complete time: ";
-          float tmp = 0;
-          float min = MAXFLOAT;
-          float max = 0;
-          for (auto item :
-               this->query_io_per_coro[thread_id][coro_id].seperate_complete) {
-            // std::cout << item << " ";
-            tmp += item;
-            min = min <= tmp ? min : tmp;
-            max = max > tmp ? max : tmp;
+            coro_timer.reset();
+            thread_timer.reset();
+
+            this->query_io_per_coro[thread_id][coro_id].resume();
+
+            // std::cout<<"Seperate complete time: ";
+            float tmp = 0;
+            float min = MAXFLOAT;
+            float max = 0;
+            for (auto item : this->query_io_per_coro[thread_id][coro_id]
+                                 .seperate_complete) {
+              // std::cout << item << " ";
+              tmp += item;
+              min = min <= tmp ? min : tmp;
+              max = max > tmp ? max : tmp;
           }
           if(this->query_io_per_coro[thread_id][coro_id].seperate_complete.size()>0){
             tmp = tmp/this->query_io_per_coro[thread_id][coro_id].seperate_complete.size();
@@ -628,8 +726,7 @@ namespace diskann {
 
           this_coro_stats->n_io_returns += io_return_num;
 
-          coro_timer.reset();
-          thread_timer.reset();
+
           
           // std::cout << "After io."<< std::endl;
           if (this->count_visited_nodes) {
@@ -675,7 +772,6 @@ namespace diskann {
         if (this_coro_stats != nullptr) {
           this_coro_stats->cpu_us += (double) cpu_timer.elapsed();
         }
-        // TODO 记录这部分io时间和计算时间到底是谁等谁
 
         cpu_timer.reset();
         // compute only the desired vectors in the pages - one for each page
@@ -695,6 +791,24 @@ namespace diskann {
             }
           }
         }
+        if (this_coro_stats != nullptr) {
+          this_coro_stats->cpu_us += (double) cpu_timer.elapsed();
+        }
+
+        // yeild func
+        if (check_can_be_yield()) {
+          this_coro_stats->executing_in_coro_us +=
+              (double) coro_timer.elapsed();
+          thread_stat->executing_in_coro_us += (double) thread_timer.elapsed();
+          thread_stat->cpu_time_per_coro[coro_id] +=
+              (double) thread_timer.elapsed();
+          co_await diskann::NullAwaiter((PQFlashIndex<T> *) (this), thread_id,
+                                        coro_id, thread_stat);
+          thread_timer.reset();
+          coro_timer.reset();
+        }
+        cpu_timer.reset();
+
         for (size_t i = 0; i < last_io_ids.size(); ++i) {
           const unsigned last_io_id = last_io_ids[i];
           char    *sector_buf = last_pages.data() + i * SECTOR_LEN;
@@ -726,6 +840,19 @@ namespace diskann {
 
         if (this_coro_stats != nullptr) {
           this_coro_stats->cpu_us += (double) cpu_timer.elapsed();
+        }
+
+        // yeild func
+        if (check_can_be_yield()) {
+          this_coro_stats->executing_in_coro_us +=
+              (double) coro_timer.elapsed();
+          thread_stat->executing_in_coro_us += (double) thread_timer.elapsed();
+          thread_stat->cpu_time_per_coro[coro_id] +=
+              (double) thread_timer.elapsed();
+          co_await diskann::NullAwaiter((PQFlashIndex<T> *) (this), thread_id,
+                                        coro_id, thread_stat);
+          thread_timer.reset();
+          coro_timer.reset();
         }
 
         // update best inserted position
@@ -769,19 +896,30 @@ namespace diskann {
         this_coro_stats->total_us = (double) query_timer.elapsed();
         this_coro_stats->executing_in_coro_us += (double) coro_timer.elapsed();
 
-        this_coro_stats->mean_io_push_queue_time = get_mean_vec(io_push_queue_time_vec);
+        this_coro_stats->mean_io_push_queue_time =
+            get_mean_vec(io_push_queue_time_vec);
         this_coro_stats->mean_io_submit_time = get_mean_vec(io_submit_time_vec);
-        this_coro_stats->mean_io_complete_time = get_mean_vec(io_complete_time_vec);
+        this_coro_stats->mean_io_complete_time =
+            get_mean_vec(io_complete_time_vec);
         this_coro_stats->mean_io_resume_time = get_mean_vec(io_resume_time_vec);
         this_coro_stats->mean_io_time = get_mean_vec(io_single_time_vec);
 
         // 统计每一次计算过程中的单簇IO的完成时间
-        this_coro_stats->mean_mean_io_complete_time = get_mean_vec(io_complete_time_mean_vec);
-        this_coro_stats->mean_min_io_complete_time = get_mean_vec(io_complete_time_min_vec);
-        this_coro_stats->mean_max_io_complete_time = get_mean_vec(io_complete_time_max_vec);
-        
+        this_coro_stats->mean_mean_io_complete_time =
+            get_mean_vec(io_complete_time_mean_vec);
+        this_coro_stats->mean_min_io_complete_time =
+            get_mean_vec(io_complete_time_min_vec);
+        this_coro_stats->mean_max_io_complete_time =
+            get_mean_vec(io_complete_time_max_vec);
+      }
+
+      if (celerity_mode && thread_stat->mode == SWIFT_STREAM && this_coro_stats->weight > 1) {
+        thread_stat->mode = TORRENT_FLOW;
+        thread_stat->high_weight_counter = -1;
       }
     }  // end for
+
+    thread_stat->cpu_time_per_coro[coro_id] += thread_timer.elapsed();
     co_return;
   }
   template<typename T>
@@ -905,6 +1043,32 @@ namespace diskann {
       // handles_map[thread_id][coro_id].resume();   
       // cpu_timer.reset();
       // all_timer.reset();
+
+      if (celerity_mode && thread_stat->mode == OperationMode::SWIFT_STREAM) {
+        int tmp_coro_id = thread_stat->high_weight_counter;
+        // if (coro_states[thread_id][tmp_coro_id] == CoroState::Shutdown)
+        //   break;
+        expected = libaio_cnt[thread_id][tmp_coro_id];
+        if(this->atomic_mark[thread_id*max_ncoroutines+tmp_coro_id].compare_exchange_strong(expected,0)){
+          thread_stat->scheduler_total_us+=all_timer.elapsed();
+          thread_stat->scheduler_cpu_us+=cpu_timer.elapsed();
+          handles_map[thread_id][tmp_coro_id].resume();
+          all_timer.reset();
+          cpu_timer.reset();
+          continue;
+        }
+        
+      }
+
+      if(celerity_mode && coro_states[thread_id][last_idx] == CoroState::LowWeightYield){
+        int coro_id = last_idx;
+        thread_stat->scheduler_total_us+=all_timer.elapsed();
+        thread_stat->scheduler_cpu_us+=cpu_timer.elapsed();
+        coro_states[thread_id][last_idx] = CoroState::Idle;
+        handles_map[thread_id][coro_id].resume();
+        all_timer.reset();
+        cpu_timer.reset();
+      }
 
       expected = libaio_cnt[thread_id][last_idx];
       if(this->atomic_mark[thread_id*max_ncoroutines+last_idx].compare_exchange_strong(expected,0)){
@@ -1553,9 +1717,7 @@ namespace diskann {
 
     auto thread_stats = new diskann::ThreadStats[this->max_nthreads+MAX_IO_RING_NUM];
 
-    // std::unique_lock<std::mutex> lk(mtx);
     this->executing_thread_num = this->max_nthreads;
-    // lk.unlock();
     std::vector<std::thread> all_threads;
     // size_t n_io_thread_num = 1;
     size_t issue_io_thread_num = this->io_nthreads;
@@ -1613,13 +1775,18 @@ namespace diskann {
     }
     for (_u64 i = 0; i < this->max_nthreads; i++) {
       ThreadStats *thread_stat = thread_stats + i;
-      std::cout << "[WORKER Thread #" << i << "] ";
+      std::cout << "[WORKER Thread #" <<std::setw(3) << i << "] ";
       thread_stat_print(thread_stat, true);
+    }
+    for (_u64 i = 0; i < this->max_nthreads; i++) {
+      ThreadStats *thread_stat = thread_stats + i;
+      std::cout << "[WORKER Thread #" <<std::setw(3) << i << "] ";
+      std::cout<<format_coro_usage(thread_stat,true)<<std::endl;
     }
     for (_u64 i = this->max_nthreads;
          i < this->max_nthreads + issue_io_thread_num; i++) {
       ThreadStats *tmp = thread_stats + i;
-      std::cout << "[ISSUE IO Thread #" << i << "] "
+      std::cout << "[ISSUE IO Thread #" <<std::setw(3) << i << "] "
                 << ", cpu time:" << tmp->cpu_us / tmp->total_us
                 << ", io time:" << tmp->io_us / tmp->total_us
                 << ", submit time: "<< tmp->io_submit_us / tmp->total_us
@@ -1663,6 +1830,8 @@ namespace diskann {
       std::cout << "[Worker Thread]Enter thread." << std::endl;
     size_t coro_size = max_ncoroutines;
 
+    thread_stat->cpu_time_per_coro.resize(coro_size);
+
     BQANN::Countdown countdown(coro_size);
 
     std::vector<cppcoro::task<void>> tasks;
@@ -1676,9 +1845,7 @@ namespace diskann {
     cppcoro::sync_wait(cppcoro::when_all_ready(std::move(tasks)));
 
 
-    std::unique_lock<std::mutex> lk(mtx);
     this->executing_thread_num--;
-    lk.unlock();
     thread_stat->total_us+=all_timer.elapsed();
 
     // if(verbose_)
@@ -2231,7 +2398,7 @@ template<typename T>
         thread_stat->io_us += io_timer.elapsed();
     }
     thread_stat->total_us += all_timer.elapsed();
-    LOG(INFO) << "[SPDK Issue IO Thread] dupRate: "<<(double)uniqueReadNum/allReadNum<<" distinct ios: "<<uniqueReadNum<<", total ios: "<<allReadNum;
+    // LOG(INFO) << "[SPDK Issue IO Thread] dupRate: "<<(double)uniqueReadNum/allReadNum<<" distinct ios: "<<uniqueReadNum<<", total ios: "<<allReadNum;
     std::cout << "[SPDK Issue IO Thread]Exit." << std::endl;
     return;
   }
