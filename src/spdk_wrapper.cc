@@ -5,8 +5,15 @@
 #include <atomic>
 #include <vector>
 // #include <google/glog.h>
+#include "glog/logging.h"
 
-const char *using_ssd = "0000:a1:00.0";
+#include "folly/Random.h"
+#include <folly/init/Init.h>
+#include <folly/Format.h>
+#include <folly/GLog.h>
+#include <folly/Likely.h>
+
+const char *using_ssd = "0000:68:00.0";
 
 namespace ssdps {
 
@@ -49,6 +56,7 @@ private:
     assert(g_controllers_.size()!= 0) ;
     // assert(g_namespaces_.size()== 1), "KISS, now only support 1 namespace";
     LOG(INFO)<<"g_namespaces_.size():"<<g_namespaces_.size();
+    CHECK_GT(g_namespaces_.size(),0);
     std::cout << "Initialization complete"<<std::endl;
 
     for (auto &ns_entry : g_namespaces_) {
@@ -68,37 +76,6 @@ private:
     
     LOG(INFO)<<"Allocated " << queue_cnt << " qpairs";
   }
-
-  // void Init2() {
-  //   int rc;
-  //   struct spdk_env_opts opts;
-  //   spdk_env_opts_init(&opts);
-  //   opts.name = "hello_world";
-  //   if (spdk_env_init(&opts) < 0) {
-  //     fprintf(stderr, "Unable to initialize SPDK env\n");
-  //     return 0;
-  //   }
-  //   printf("Initializing NVMe Controllers\n");
-
-  //   if (g_vmd && spdk_vmd_init()) {
-  //     fprintf(stderr, "Failed to initialize VMD."
-  //       " Some NVMe devices can be unavailable.\n");
-  //   }
-  //   rc = spdk_nvme_probe(&g_trid, NULL, SpdkWrapperImplementation::ProbeCallBack,
-  //     SpdkWrapperImplementation::AttachCallBack, NULL);
-  //   if (rc != 0) {
-  //     fprintf(stderr, "spdk_nvme_probe() failed\n");
-  //     rc = 1;
-  //     goto exit;
-  //   }
-  
-  //   printf("Initialization complete.\n");
-  //   // hello_world();
-  //   // cleanup();
-    
-
-
-  // }
 
   SpdkWrapperImplementation(int queue_cnt) : queue_cnt(queue_cnt) {
     // CHECK(queue_cnt <= MAX_QPAIR_NUM);
@@ -327,6 +304,7 @@ private:
                              struct spdk_nvme_ctrlr *ctrlr,
                              const struct spdk_nvme_ctrlr_opts *opts) {
     SpdkWrapperImplementation *ptr = (SpdkWrapperImplementation *)(cb_ctx);
+    LOG(INFO) << folly::format("Attached to {}", trid->traddr);
 
     /*
      * spdk_nvme_ctrlr is the logical abstraction in SPDK for an NVMe
@@ -365,8 +343,12 @@ private:
 
       ptr->g_namespaces_.push_back(entry);
 
-      LOG(INFO)<<"Namespace ID: "<<spdk_nvme_ns_get_id(ns)<<" size: "<<spdk_nvme_ns_get_size(ns) / 1000000000<<" GB";
-      LOG(INFO)<<"Sector Size: "<<spdk_nvme_ns_get_sector_size(ns)<<" UUID: "<<spdk_nvme_ns_get_uuid(ns);
+      // LOG(INFO)<<"Namespace ID: "<<spdk_nvme_ns_get_id(ns)<<" size: "<<spdk_nvme_ns_get_size(ns) / 1000000000<<" GB";
+      // LOG(INFO)<<"Sector Size: "<<spdk_nvme_ns_get_sector_size(ns)<<" UUID: "<<spdk_nvme_ns_get_uuid(ns);
+      LOG(INFO) << folly::format("Namespace ID: {} size: {} GB Sector Size: {}B\n",
+        spdk_nvme_ns_get_id(ns),
+        spdk_nvme_ns_get_size(ns) / 1000000000,
+        spdk_nvme_ns_get_sector_size(ns));
       CHECK_EQ(spdk_nvme_ns_get_sector_size(ns),ptr->kLBASize_)<<"lba size not match";
     }
   }

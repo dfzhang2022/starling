@@ -64,7 +64,9 @@ namespace bqann {
 
       std::string log_str = "weights:{";
       for (size_t i = 0; i < queue_size; i++) {
-        log_str = log_str + std::to_string(this->weights[i]) + ",";
+        if(i!=0)log_str = log_str + ",";
+        log_str = log_str + std::to_string(this->weights[i]) ;
+        
       }
       LOG(INFO)<<log_str + "}";
     }

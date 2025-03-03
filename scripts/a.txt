@@ -1,0 +1,184 @@
+00:00.0 System peripheral: Intel Corporation Device 09a2 (rev 04)
+00:00.1 System peripheral: Intel Corporation Device 09a4 (rev 04)
+00:00.2 System peripheral: Intel Corporation Device 09a3 (rev 04)
+00:00.4 Host bridge: Intel Corporation Device 0998
+00:01.0 System peripheral: Intel Corporation Device 0b00
+00:01.1 System peripheral: Intel Corporation Device 0b00
+00:01.2 System peripheral: Intel Corporation Device 0b00
+00:01.3 System peripheral: Intel Corporation Device 0b00
+00:01.4 System peripheral: Intel Corporation Device 0b00
+00:01.5 System peripheral: Intel Corporation Device 0b00
+00:01.6 System peripheral: Intel Corporation Device 0b00
+00:01.7 System peripheral: Intel Corporation Device 0b00
+00:02.0 System peripheral: Intel Corporation Device 09a6
+00:02.1 System peripheral: Intel Corporation Device 09a7
+00:02.4 Non-Essential Instrumentation [1300]: Intel Corporation Device 3456 (rev 01)
+00:11.0 Unassigned class [ff00]: Intel Corporation C620 Series Chipset Family MROM 0 (rev 0a)
+00:11.1 Unassigned class [ff00]: Intel Corporation C620 Series Chipset Family MROM 1 (rev 0a)
+00:14.0 USB controller: Intel Corporation C620 Series Chipset Family USB 3.0 xHCI Controller (rev 0a)
+00:14.2 Signal processing controller: Intel Corporation C620 Series Chipset Family Thermal Subsystem (rev 0a)
+00:16.0 Communication controller: Intel Corporation C620 Series Chipset Family MEI Controller #1 (rev 0a)
+00:16.1 Communication controller: Intel Corporation C620 Series Chipset Family MEI Controller #2 (rev 0a)
+00:16.4 Communication controller: Intel Corporation C620 Series Chipset Family MEI Controller #3 (rev 0a)
+00:17.0 SATA controller: Intel Corporation C620 Series Chipset Family SATA Controller [AHCI mode] (rev 0a)
+00:1c.0 PCI bridge: Intel Corporation C620 Series Chipset Family PCI Express Root Port #4 (rev fa)
+00:1c.4 PCI bridge: Intel Corporation C620 Series Chipset Family PCI Express Root Port #5 (rev fa)
+00:1f.0 ISA bridge: Intel Corporation Device a1cb (rev 0a)
+00:1f.2 Memory controller: Intel Corporation C620 Series Chipset Family Power Management Controller (rev 0a)
+00:1f.4 SMBus: Intel Corporation C620 Series Chipset Family SMBus (rev 0a)
+00:1f.5 Serial bus controller: Intel Corporation C620 Series Chipset Family SPI Controller (rev 0a)
+01:00.0 PCI bridge: ASPEED Technology, Inc. AST1150 PCI-to-PCI Bridge (rev 04)
+02:00.0 VGA compatible controller: ASPEED Technology, Inc. ASPEED Graphics Family (rev 41)
+03:00.0 Non-Volatile memory controller: Intel Corporation SSD 660P Series (rev 03)
+16:00.0 System peripheral: Intel Corporation Device 09a2 (rev 04)
+16:00.1 System peripheral: Intel Corporation Device 09a4 (rev 04)
+16:00.2 System peripheral: Intel Corporation Device 09a3 (rev 04)
+16:00.4 Host bridge: Intel Corporation Device 0998
+30:00.0 System peripheral: Intel Corporation Device 09a2 (rev 04)
+30:00.1 System peripheral: Intel Corporation Device 09a4 (rev 04)
+30:00.2 System peripheral: Intel Corporation Device 09a3 (rev 04)
+30:00.4 Host bridge: Intel Corporation Device 0998
+30:04.0 PCI bridge: Intel Corporation Device 347c (rev 04)
+31:00.0 Ethernet controller: Intel Corporation I350 Gigabit Network Connection (rev 01)
+31:00.1 Ethernet controller: Intel Corporation I350 Gigabit Network Connection (rev 01)
+4a:00.0 System peripheral: Intel Corporation Device 09a2 (rev 04)
+4a:00.1 System peripheral: Intel Corporation Device 09a4 (rev 04)
+4a:00.2 System peripheral: Intel Corporation Device 09a3 (rev 04)
+4a:00.4 Host bridge: Intel Corporation Device 0998
+64:00.0 System peripheral: Intel Corporation Device 09a2 (rev 04)
+64:00.1 System peripheral: Intel Corporation Device 09a4 (rev 04)
+64:00.2 System peripheral: Intel Corporation Device 09a3 (rev 04)
+64:00.4 Host bridge: Intel Corporation Device 0998
+64:02.0 PCI bridge: Intel Corporation Device 347a (rev 04)
+64:03.0 PCI bridge: Intel Corporation Device 347b (rev 04)
+64:04.0 PCI bridge: Intel Corporation Device 347c (rev 04)
+64:05.0 PCI bridge: Intel Corporation Device 347d (rev 04)
+65:00.0 Non-Volatile memory controller: Samsung Electronics Co Ltd NVMe SSD Controller PM9A1/PM9A3/980PRO
+66:00.0 Non-Volatile memory controller: Samsung Electronics Co Ltd NVMe SSD Controller PM9A1/PM9A3/980PRO
+67:00.0 Non-Volatile memory controller: Samsung Electronics Co Ltd NVMe SSD Controller PM9A1/PM9A3/980PRO
+68:00.0 Non-Volatile memory controller: Samsung Electronics Co Ltd NVMe SSD Controller PM9A1/PM9A3/980PRO
+7e:00.0 System peripheral: Intel Corporation Device 3450
+7e:00.1 System peripheral: Intel Corporation Device 3451
+7e:00.2 System peripheral: Intel Corporation Device 3452
+7e:00.3 Host bridge: Intel Corporation Device 0998
+7e:00.5 System peripheral: Intel Corporation Device 3455
+7e:02.0 System peripheral: Intel Corporation Device 3440
+7e:02.1 System peripheral: Intel Corporation Device 3441
+7e:02.2 System peripheral: Intel Corporation Device 3442
+7e:03.0 System peripheral: Intel Corporation Device 3440
+7e:03.1 System peripheral: Intel Corporation Device 3441
+7e:03.2 System peripheral: Intel Corporation Device 3442
+7e:04.0 System peripheral: Intel Corporation Device 3440
+7e:04.1 System peripheral: Intel Corporation Device 3441
+7e:04.2 System peripheral: Intel Corporation Device 3442
+7e:04.3 System peripheral: Intel Corporation Device 3443
+7e:05.0 System peripheral: Intel Corporation Device 3445
+7e:05.1 System peripheral: Intel Corporation Device 3446
+7e:05.2 System peripheral: Intel Corporation Device 3447
+7e:06.0 System peripheral: Intel Corporation Device 3445
+7e:06.1 System peripheral: Intel Corporation Device 3446
+7e:06.2 System peripheral: Intel Corporation Device 3447
+7e:07.0 System peripheral: Intel Corporation Device 3445
+7e:07.1 System peripheral: Intel Corporation Device 3446
+7e:07.2 System peripheral: Intel Corporation Device 3447
+7e:0b.0 System peripheral: Intel Corporation Device 3448
+7e:0b.1 System peripheral: Intel Corporation Device 3448
+7e:0b.2 System peripheral: Intel Corporation Device 344b
+7e:0c.0 Performance counters: Intel Corporation Device 344a
+7e:0d.0 Performance counters: Intel Corporation Device 344a
+7e:0e.0 Performance counters: Intel Corporation Device 344a
+7e:0f.0 Performance counters: Intel Corporation Device 344a
+7e:1a.0 Performance counters: Intel Corporation Device 2880
+7e:1b.0 Performance counters: Intel Corporation Device 2880
+7e:1c.0 Performance counters: Intel Corporation Device 2880
+7e:1d.0 Performance counters: Intel Corporation Device 2880
+7f:00.0 System peripheral: Intel Corporation Device 344c
+7f:00.1 System peripheral: Intel Corporation Device 344c
+7f:00.2 System peripheral: Intel Corporation Device 344c
+7f:00.3 System peripheral: Intel Corporation Device 344c
+7f:00.4 System peripheral: Intel Corporation Device 344c
+7f:00.5 System peripheral: Intel Corporation Device 344c
+7f:00.6 System peripheral: Intel Corporation Device 344c
+7f:00.7 System peripheral: Intel Corporation Device 344c
+7f:01.0 System peripheral: Intel Corporation Device 344c
+7f:01.1 System peripheral: Intel Corporation Device 344c
+7f:01.2 System peripheral: Intel Corporation Device 344c
+7f:01.3 System peripheral: Intel Corporation Device 344c
+7f:01.4 System peripheral: Intel Corporation Device 344c
+7f:01.5 System peripheral: Intel Corporation Device 344c
+7f:01.6 System peripheral: Intel Corporation Device 344c
+7f:01.7 System peripheral: Intel Corporation Device 344c
+7f:02.0 System peripheral: Intel Corporation Device 344c
+7f:02.1 System peripheral: Intel Corporation Device 344c
+7f:02.2 System peripheral: Intel Corporation Device 344c
+7f:02.3 System peripheral: Intel Corporation Device 344c
+7f:02.4 System peripheral: Intel Corporation Device 344c
+7f:02.5 System peripheral: Intel Corporation Device 344c
+7f:02.6 System peripheral: Intel Corporation Device 344c
+7f:02.7 System peripheral: Intel Corporation Device 344c
+7f:03.0 System peripheral: Intel Corporation Device 344c
+7f:03.1 System peripheral: Intel Corporation Device 344c
+7f:03.2 System peripheral: Intel Corporation Device 344c
+7f:03.3 System peripheral: Intel Corporation Device 344c
+7f:03.4 System peripheral: Intel Corporation Device 344c
+7f:03.5 System peripheral: Intel Corporation Device 344c
+7f:03.6 System peripheral: Intel Corporation Device 344c
+7f:03.7 System peripheral: Intel Corporation Device 344c
+7f:04.0 System peripheral: Intel Corporation Device 344c
+7f:04.1 System peripheral: Intel Corporation Device 344c
+7f:04.2 System peripheral: Intel Corporation Device 344c
+7f:04.3 System peripheral: Intel Corporation Device 344c
+7f:04.4 System peripheral: Intel Corporation Device 344c
+7f:04.5 System peripheral: Intel Corporation Device 344c
+7f:04.6 System peripheral: Intel Corporation Device 344c
+7f:04.7 System peripheral: Intel Corporation Device 344c
+7f:0a.0 System peripheral: Intel Corporation Device 344d
+7f:0a.1 System peripheral: Intel Corporation Device 344d
+7f:0a.2 System peripheral: Intel Corporation Device 344d
+7f:0a.3 System peripheral: Intel Corporation Device 344d
+7f:0a.4 System peripheral: Intel Corporation Device 344d
+7f:0a.5 System peripheral: Intel Corporation Device 344d
+7f:0a.6 System peripheral: Intel Corporation Device 344d
+7f:0a.7 System peripheral: Intel Corporation Device 344d
+7f:0b.0 System peripheral: Intel Corporation Device 344d
+7f:0b.1 System peripheral: Intel Corporation Device 344d
+7f:0b.2 System peripheral: Intel Corporation Device 344d
+7f:0b.3 System peripheral: Intel Corporation Device 344d
+7f:0b.4 System peripheral: Intel Corporation Device 344d
+7f:0b.5 System peripheral: Intel Corporation Device 344d
+7f:0b.6 System peripheral: Intel Corporation Device 344d
+7f:0b.7 System peripheral: Intel Corporation Device 344d
+7f:0c.0 System peripheral: Intel Corporation Device 344d
+7f:0c.1 System peripheral: Intel Corporation Device 344d
+7f:0c.2 System peripheral: Intel Corporation Device 344d
+7f:0c.3 System peripheral: Intel Corporation Device 344d
+7f:0c.4 System peripheral: Intel Corporation Device 344d
+7f:0c.5 System peripheral: Intel Corporation Device 344d
+7f:0c.6 System peripheral: Intel Corporation Device 344d
+7f:0c.7 System peripheral: Intel Corporation Device 344d
+7f:0d.0 System peripheral: Intel Corporation Device 344d
+7f:0d.1 System peripheral: Intel Corporation Device 344d
+7f:0d.2 System peripheral: Intel Corporation Device 344d
+7f:0d.3 System peripheral: Intel Corporation Device 344d
+7f:0d.4 System peripheral: Intel Corporation Device 344d
+7f:0d.5 System peripheral: Intel Corporation Device 344d
+7f:0d.6 System peripheral: Intel Corporation Device 344d
+7f:0d.7 System peripheral: Intel Corporation Device 344d
+7f:0e.0 System peripheral: Intel Corporation Device 344d
+7f:0e.1 System peripheral: Intel Corporation Device 344d
+7f:0e.2 System peripheral: Intel Corporation Device 344d
+7f:0e.3 System peripheral: Intel Corporation Device 344d
+7f:0e.4 System peripheral: Intel Corporation Device 344d
+7f:0e.5 System peripheral: Intel Corporation Device 344d
+7f:0e.6 System peripheral: Intel Corporation Device 344d
+7f:0e.7 System peripheral: Intel Corporation Device 344d
+7f:1d.0 System peripheral: Intel Corporation Device 344f
+7f:1d.1 System peripheral: Intel Corporation Device 3457
+7f:1e.0 System peripheral: Intel Corporation Device 3458 (rev 06)
+7f:1e.1 System peripheral: Intel Corporation Device 3459 (rev 06)
+7f:1e.2 System peripheral: Intel Corporation Device 345a (rev 06)
+7f:1e.3 System peripheral: Intel Corporation Device 345b (rev 06)
+7f:1e.4 System peripheral: Intel Corporation Device 345c (rev 06)
+7f:1e.5 System peripheral: Intel Corporation Device 345d (rev 06)
+7f:1e.6 System peripheral: Intel Corporation Device 345e (rev 06)
+7f:1e.7 System peripheral: Intel Corporation Device 345f (rev 06)

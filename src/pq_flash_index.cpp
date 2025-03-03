@@ -100,6 +100,7 @@ namespace diskann {
       free(this->frac);
       free(this->mins);
     }
+    std::cout<<"~ done."<<std::endl;
   }
 
   template<typename T>
@@ -223,6 +224,11 @@ namespace diskann {
     this->io_state.resize(nthreads);
     for(size_t k = 0;k<nthreads;k++){
       this->io_state[k].resize(max_ncoroutines,IORequestState::Idle);
+    }
+
+    this->coro_states.resize(nthreads);
+    for(size_t k = 0;k<nthreads;k++){
+      this->coro_states[k].resize(max_ncoroutines,diskann::CoroState::Idle);
     }
 
     std::cout<<"atomic_mark.size(): "<<atomic_mark.size()<<std::endl;

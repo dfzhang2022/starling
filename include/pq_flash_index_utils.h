@@ -88,6 +88,7 @@ namespace diskann {
     size_t coro_io_nthreads = 0;
     size_t issue_io_thread_num = 1;
     float weight_ratio = 0.1;
+    bool celerity_mode = false;
 
     // IO related.
     bool pure_io = false;
