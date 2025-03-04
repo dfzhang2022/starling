@@ -381,6 +381,7 @@ case $2 in
                 --query_num ${QUERY_NUM}  \
                 --issue_io_thread_num ${IO_ISSUE_THREAD_NUM} \
                 --ssd_device_name ${ssd_device_name} \
+                --celerity_mode ${CELERITY_MODE}  \
                 --glog_path=${INDEX_PREFIX_PATH}search/ > ${SEARCH_LOG} 
               log_arr+=( ${SEARCH_LOG} )
               echo "search end."

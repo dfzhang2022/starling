@@ -2341,7 +2341,7 @@ template<typename T>
     io_timer.reset();
     
     std::cout << "[SPDK Issue IO Thread]Enter thread." << std::endl;
-    int uniqueReadNum = 0, allReadNum = 0;
+    // int uniqueReadNum = 0, allReadNum = 0;
 
 
     while(true){

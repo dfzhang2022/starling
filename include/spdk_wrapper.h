@@ -28,6 +28,8 @@ class SpdkWrapper {
 
   virtual void SubmitReadCommand(void *pinned_dst, const int64_t bytes, const int64_t lba,
                                  spdk_nvme_cmd_cb func, void *ctx, int qp_id) = 0;
+  virtual void SubmitReadCommand(void *pinned_dst, const int64_t bytes, const int64_t lba,
+                                  spdk_nvme_cmd_cb func, void *ctx, int qp_id, int ssd_id ) = 0;
 
   virtual int SubmitWriteCommand(const void *pinned_src, const int64_t bytes,
                                  const int64_t lba, spdk_nvme_cmd_cb func, void *ctx, int qp_id) = 0;
@@ -43,6 +45,8 @@ class SpdkWrapper {
                         const int64_t lba_4k, int qp_id) = 0;
   virtual void SubmitRead4K(AlignedRead &read, spdk_nvme_cmd_cb func, void *ctx,
                             int qp_id) = 0;
+  virtual void SubmitRead4K(AlignedRead &read, spdk_nvme_cmd_cb func, void *ctx,
+                            int qp_id, int ssd_id) = 0;
 
   virtual void BatchSyncRead4K(std::vector<AlignedRead> &read_vec, int qp_id) = 0;
 
@@ -52,7 +56,9 @@ class SpdkWrapper {
   virtual void Sync2Read(void *pinned_dst, const int64_t lba, int qp_id) = 0;
 
   virtual void PollCompleteQueue(int qp_id) = 0;
+  virtual void PollCompleteQueue(int qp_id, int ssd_id) = 0;
   virtual int32_t myPollCompleteQueue(int qp_id) = 0;
+  virtual int32_t myPollCompleteQueue(int qp_id, int ssd_id) = 0;
   virtual int GetLBASize() const = 0;
   virtual uint64_t GetLBANumber() const = 0;
   virtual ~SpdkWrapper() {}

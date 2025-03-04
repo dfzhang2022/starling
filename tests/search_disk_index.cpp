@@ -28,6 +28,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "linux_aligned_file_reader.h"
+#include "ssd_band_aligned_file_reader.h"
 #else
 #ifdef USE_BING_INFRA
 #include "bing_aligned_file_reader.h"
@@ -201,7 +202,12 @@ int search_disk_index(
 //   reader.reset(new diskann::BingAlignedFileReader());
 // #endif
 // #else
-  reader.reset(new LinuxAlignedFileReader()); // Only Linux
+  if(NEW_FEATURE){
+    reader.reset(new SSDBandAlignedFileReader());
+  }else{
+    reader.reset(new LinuxAlignedFileReader()); // Only Linux
+  }
+
 // #endif
 
   std::shared_ptr<ssdps::SpdkWrapper> spdk_reader = nullptr;

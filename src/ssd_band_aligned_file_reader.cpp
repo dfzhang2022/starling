@@ -123,10 +123,12 @@ void SSDBandAlignedFileReader::open_multi_ssd(
   }
 
   fd_num = this->file_desc_vec.size();
+  ssd_read_stats.resize(fd_num,0);
 }
 
 void SSDBandAlignedFileReader::close() {
   int ret;
+  std::stringstream output;
   for (auto &fd : this->file_desc_vec) {
     ret = ::fcntl(fd, F_GETFD);
     assert(ret != -1);
@@ -137,14 +139,19 @@ void SSDBandAlignedFileReader::close() {
                 << ":" << ::strerror(errno) << std::endl;
     }
   }
+  for(size_t k = 0; k < fd_num; k++){
+    output<<"["<<k<<":"<<ssd_read_stats[k]<<"] ";
+  }
+  output<<std::endl;
+  std::cout<<output.str();
 }
-void SSDBandAlignedFileReader::read(std::vector<> &read_reqs, io_context_t &ctx,
-                                    bool async) {
-  return read(read_reqs, ctx, async.0);
+void SSDBandAlignedFileReader::read(std::vector<AlignedRead> &read_reqs, IOContext &ctx,
+  bool async) {
+  return read(read_reqs, ctx, async,0);
 }
 
-void SSDBandAlignedFileReader::read(std::vector<> &read_reqs, io_context_t &ctx,
-                                    bool async, int ssd_id) {
+void SSDBandAlignedFileReader::read(std::vector<AlignedRead> &read_reqs, IOContext &ctx,
+  bool async, int ssd_id) {
   if (async == true) {
     diskann::cout << "Async currently not supported in linux." << std::endl;
   }
@@ -155,18 +162,18 @@ void SSDBandAlignedFileReader::read(std::vector<> &read_reqs, io_context_t &ctx,
   return;
 }
 
-int SSDBandAlignedFileReader::submit_reqs(std::vector<> &read_reqs,
-                                          io_context_t  &ctx) {
+int SSDBandAlignedFileReader::submit_reqs(std::vector<AlignedRead> &read_reqs, IOContext &ctx) {
   CHECK_GT(this->file_desc_vec.size(), 0);
-  return submit_reqs(read_reqs, ctx, 0);
+  last_ssd_index = (last_ssd_index+1) % fd_num;
+  return submit_reqs(read_reqs, ctx, last_ssd_index);
 }
 
-int SSDBandAlignedFileReader::submit_reqs(std::vector<AlignedRead> &read_reqs,
-                                          IOContext &ctx, int ssd_id) {
+int SSDBandAlignedFileReader::submit_reqs(std::vector<AlignedRead> &read_reqs, IOContext &ctx, int ssd_id) {
   assert(this->file_desc_vec[ssd_id] != -1);
+  ssd_read_stats[ssd_id]++;
 
   if (read_reqs.size() > SSD_BAND_MAX_EVENTS) {
-    std::cerr << "The number of requests should not exceed " << MAX_EVENTS
+    std::cerr << "The number of requests should not exceed " << SSD_BAND_MAX_EVENTS
               << std::endl;
     exit(-1);
   }
@@ -192,7 +199,7 @@ int SSDBandAlignedFileReader::submit_reqs(std::vector<AlignedRead> &read_reqs,
   }
   return n_ops;
 }
-void get_events(IOContext &ctx, int n_ops) {
+void SSDBandAlignedFileReader:: get_events(IOContext &ctx, int n_ops) {
   std::vector<io_event_t> evts(n_ops);
   auto                    ret =
       io_getevents(ctx, (int64_t) n_ops, (int64_t) n_ops, evts.data(), nullptr);
@@ -201,4 +208,4 @@ void get_events(IOContext &ctx, int n_ops) {
     exit(-1);
   }
 }
-}
+

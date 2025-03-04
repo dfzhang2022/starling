@@ -62,13 +62,13 @@ namespace bqann {
         this->weight_q_map[this->weights[i]] = &weighted_queues[i];
       }
 
-      std::string log_str = "weights:{";
-      for (size_t i = 0; i < queue_size; i++) {
-        if(i!=0)log_str = log_str + ",";
-        log_str = log_str + std::to_string(this->weights[i]) ;
+      // std::string log_str = "weights:{";
+      // for (size_t i = 0; i < queue_size; i++) {
+      //   if(i!=0)log_str = log_str + ",";
+      //   log_str = log_str + std::to_string(this->weights[i]) ;
         
-      }
-      LOG(INFO)<<log_str + "}";
+      // }
+      // LOG(INFO)<<log_str + "}";
     }
     ~WrrQueue() = default;
 

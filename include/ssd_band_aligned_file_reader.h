@@ -1,5 +1,5 @@
 #pragma once
-
+#ifndef _WINDOWS
 #include "aligned_file_reader.h"
 
 class SSDBandAlignedFileReader : public AlignedFileReader {
@@ -8,7 +8,9 @@ class SSDBandAlignedFileReader : public AlignedFileReader {
   std::vector<FileHandle> file_desc_vec;
 
   size_t fd_num = 0;
+  std::vector<int> ssd_read_stats;
 
+  size_t last_ssd_index = 0;
   io_context_t bad_ctx = (io_context_t) -1;
 
  public:
@@ -32,10 +34,12 @@ class SSDBandAlignedFileReader : public AlignedFileReader {
   void read(std::vector<AlignedRead> &read_reqs, IOContext &ctx,
             bool async = false);
   void read(std::vector<AlignedRead> &read_reqs, IOContext &ctx,
-            bool async = false, int ssd_id);
+            bool async = false, int ssd_id = 0);
 
   int  submit_reqs(std::vector<AlignedRead> &read_reqs, IOContext &ctx);
   int  submit_reqs(std::vector<AlignedRead> &read_reqs, IOContext &ctx,
-                   int ssd_id);
+                   int ssd_id = 0);
   void get_events(IOContext &ctx, int n_ops);
-}
+};
+
+#endif

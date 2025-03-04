@@ -1021,7 +1021,14 @@ namespace diskann {
       index_fname=this->ssd_device_name;
     }
     LOG(WARNING) << "Be careful the actual index file opened is: " << index_fname << std::endl;
-    reader->open(index_fname);
+    // reader->open(index_fname);
+    std::vector<std::string> ssd_vec = {"/dev/nvme0n1"};
+
+    if(NEW_FEATURE){
+      SSDBandAlignedFileReader* tmp_cast_reader = dynamic_cast<SSDBandAlignedFileReader*>(reader.get());
+      tmp_cast_reader->open_multi_ssd(ssd_vec);
+    }
+
     this->index_fd_ = open(index_fname.c_str(),O_RDONLY | O_NOATIME |O_DIRECT);
     
     if(use_bq_search_){

@@ -3,8 +3,8 @@
 
 set(CMAKE_CXX_STANDARD 20)
 
-set(CMAKE_PREFIX_PATH /home/dfzhang/folly_install/folly)
-set(folly_DIR /home/dfzhang/folly_install/folly/lib/cmake/folly)
+set(CMAKE_PREFIX_PATH /home/user/dfzhang/folly_install/folly)
+set(folly_DIR /home/user/dfzhang/folly_install/folly/lib/cmake/folly)
 find_package(folly REQUIRED)
 find_package(gflags REQUIRED)
 find_package(glog REQUIRED)
@@ -31,10 +31,10 @@ if(MSVC)
 else()
     #file(GLOB CPP_SOURCES *.cpp)
     set(CPP_SOURCES ann_exception.cpp aux_utils.cpp distance.cpp index.cpp
-        linux_aligned_file_reader.cpp math_utils.cpp natural_number_map.cpp
+        linux_aligned_file_reader.cpp ssd_band_aligned_file_reader.cpp math_utils.cpp natural_number_map.cpp
         natural_number_set.cpp memory_mapper.cpp partition_and_pq.cpp
         pq_flash_index.cpp logger.cpp utils.cpp page_search.cpp async_search.cpp visit_freq.cpp
-        range_search.cpp spdk_wrapper.cc bqann_queue.cpp)
+        range_search.cpp spdk_wrapper.cpp bqann_queue.cpp)
     add_library(${PROJECT_NAME} ${CPP_SOURCES})
     # add_library(${PROJECT_NAME}_s STATIC ${CPP_SOURCES})
     target_link_options(${PROJECT_NAME} INTERFACE -Wl,--whole-archive -Wl,--no-as-needed)
@@ -42,7 +42,7 @@ else()
     target_link_options(${PROJECT_NAME} INTERFACE -Wl,--no-whole-archive)
     target_link_options(${PROJECT_NAME} INTERFACE -lnuma -ldl -L${SPDK_POS}/isa-l/.libs -lisal -pthread -lrt -luuid -lcrypto -lm -laio -ldouble-conversion -lunwind)
     target_link_libraries(${PROJECT_NAME} PRIVATE uring cppcoro)
-    target_link_libraries(${PROJECT_NAME} PUBLIC Folly::folly gflags glog)
+    target_link_libraries(${PROJECT_NAME} PUBLIC Folly::folly)
     # target_link_libraries(${PROJECT_NAME}_s PRIVATE uring cppcoro)
 
 endif()

@@ -7,6 +7,7 @@
 #include "windows_aligned_file_reader.h"
 #else
 #include "linux_aligned_file_reader.h"
+#include "ssd_band_aligned_file_reader.h"
 #endif
 
 #define READ_U64(stream, val) stream.read((char *) &val, sizeof(_u64))
